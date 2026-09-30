@@ -88,10 +88,14 @@ export const DARK_TOKENS = Object.freeze({
   warning: '#e0af68',
 
   // 角色
-  userText: '#c0caf5',
+  //
+  // 命名对齐 pi 的消息词汇（userMessageBg / userMessageText / thinkingText），
+  // 这样两边的设计语言是同一套——照着 pi 读代码时不用做心智翻译。
+  userMessageBg: '#1f2335',
+  userMessageText: '#c0caf5',
   userBorder: '#7aa2f7',
   assistantBorder: '#3b4261',
-  reasoningText: '#565f89',
+  thinkingText: '#565f89',
 
   // 工具
   toolTitle: '#7aa2f7',

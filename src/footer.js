@@ -21,6 +21,8 @@ import path from 'node:path'
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
+import { createEventTail } from './session-events.js'
+
 /** 分段之间的分隔符。 */
 const SEPARATOR = ' │ '
 
@@ -135,6 +137,51 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   let limitResolved = false
   /** tokenMeter 的测量结果缓存：按会话日志版本号失效。 */
   let tokenCache = { seq: -1, used: undefined }
+  /** 最近一次请求的真实路由（增量扫描，只读新事件）。 */
+  let latestRouteCache
+  let eventTail
+
+  /**
+   * 最近一次请求**实际用的**路由。
+   *
+   * 读会话日志里最后一条 `request/header` 的 `config`——它记录的是真正发出去的
+   * provider/model/reasoningEffort，比「本次会话请求用什么」准确（用户可能
+   * 用 --model 覆盖、或 roundrobin 换了候选）。
+   *
+   * 用增量读（`createEventTail`）而不是每次全量扫：这个函数每帧都会被调用，
+   * 全量扫会退化成 O(n²)。**注意活会话要用 `eventAt(seq)`**——`session.events`
+   * 在活会话上是空的，见 src/session-events.js。
+   */
+  function latestRoute() {
+    const session = getAgent()?.session
+    if (session === undefined || session === null) return latestRouteCache
+    eventTail ??= createEventTail(session)
+
+    let fresh
+    try {
+      fresh = eventTail()
+    } catch {
+      return latestRouteCache
+    }
+
+    for (const event of fresh) {
+      if (event?.type !== 'request/header') continue
+      const config = event.data?.header?.config
+      if (config === null || typeof config !== 'object') continue
+      latestRouteCache = {
+        provider: typeof config.provider === 'string' ? config.provider : undefined,
+        model: typeof config.model === 'string' ? config.model : undefined,
+        effort: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : undefined,
+      }
+    }
+
+    if (process.env.DSH_TUI_DEBUG_FOOTER === '1' && fresh.length > 0) {
+      process.stderr.write(
+        `\ndsh-tui[footer] 新事件 ${fresh.length} 条（${fresh.map((e) => e?.type).join(',')}）route=${latestRouteCache === undefined ? 'none' : JSON.stringify(latestRouteCache)}\n`,
+      )
+    }
+    return latestRouteCache
+  }
 
   /** 模型上下文窗口只需要解析一次（异步），其余每帧同步读。 */
   async function resolveContextLimit() {
@@ -199,10 +246,11 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
      */
     snapshot() {
       const selection = getSelection()
-      const model =
-        selection?.provider === undefined || selection?.model === undefined
-          ? undefined
-          : `${selection.provider}/${selection.model}`
+      const route = latestRoute()
+
+      // 优先用「实际用的」，退回「请求的」。只显示模型名——与 pi 的底栏一致，
+      // provider 太长且通常在 extension status 里另有出处。
+      const model = route?.model ?? selection?.model
 
       const used = measureTokens()
       // 用 path.basename 而不是 split('/')：后者在 Windows 上会把整个路径
@@ -210,6 +258,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       const base = path.basename(cwd)
       return {
         model,
+        thinking: route?.effort,
         dir: base === '' ? cwd : base,
         branch: readGitBranch(cwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: contextLimit },
@@ -253,6 +302,8 @@ export class DefaultFooter {
     const segments = []
 
     if (snapshot.model !== undefined) segments.push({ text: snapshot.model, tone: 'accent' })
+    // 推理强度：与 pi 的 `think:high` 同一位置、同一写法。
+    if (snapshot.thinking !== undefined) segments.push({ text: `think:${snapshot.thinking}`, tone: 'muted' })
     if (snapshot.dir !== undefined) segments.push({ text: `dir ${snapshot.dir}`, tone: 'muted' })
     if (snapshot.branch !== undefined) segments.push({ text: `⏵ ${snapshot.branch}`, tone: 'muted' })
 

@@ -16,6 +16,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { applySessionEvent, applyStreamFrame, replay } from './projection.js'
+import { readSessionEvents } from './session-events.js'
 
 /**
  * 决定本次会话的模型路由。
@@ -145,7 +146,9 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   // 注意顺序：先 replay 再订阅，否则同一条事件会被应用两次。
   if (resuming) {
     try {
-      replay(view, agent.session.events, present)
+      // 用 readSessionEvents 而不是 `session.events`：**活会话上 events 是空的**
+      // （见 src/session-events.js），直接用它会让 resume 看不到任何历史。
+      replay(view, readSessionEvents(agent.session), present)
     } catch {
       // 历史里出现投影层不认识的东西不应该阻止启动。
     }

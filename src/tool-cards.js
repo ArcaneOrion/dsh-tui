@@ -11,7 +11,7 @@
  * 认不出的卡片类型一律退回原文渲染——**宁可朴素，不可编造**。
  */
 
-import { Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { Box, Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 /** 卡片类型的图标。认不出的用 · 。 */
 const KIND_ICON = {
@@ -273,7 +273,11 @@ export function renderResultView(view, fallbackText, theme, options = {}) {
 }
 
 /**
- * 一条工具调用的完整卡片：卡片头 + 状态 + 结果。
+ * 一条工具调用的完整卡片。
+ *
+ * 对齐 pi 的 `ToolExecutionComponent`：**一整块有底色的框**，底色随状态变——
+ * 进行中 `toolPendingBg`、成功 `toolSuccessBg`、失败 `toolErrorBg`。
+ * 底色本身就是状态信号，不用再读一行文字。
  *
  * 这是注册表里 `tool` 角色的默认渲染器，可被 `setMessageRenderer('tool', …)` 换掉。
  */
@@ -291,22 +295,27 @@ export class ToolCard extends Container {
           ? theme.fg('error', '失败')
           : theme.fg('success', '完成')
 
+    const bgToken = row.done !== true ? 'toolPendingBg' : row.isError === true ? 'toolErrorBg' : 'toolSuccessBg'
+    const box = new Box(1, 1, (content) => theme.bg(bgToken, content))
+
     const callLines = renderCallView(row.callView, theme)
     if (callLines.length === 0) {
       // 没有展示意图（工具没声明 presentCall，或 args 还不是合法 JSON）
-      const name = row.toolName ?? 'tool'
-      this.addChild(new Text(theme.fg('toolTitle', `▸ ${name}`) + '  ' + status, 1, 0))
+      box.addChild(new Text(theme.fg('toolTitle', `▸ ${row.toolName ?? 'tool'}`) + '  ' + status, 0, 0))
     } else {
-      this.addChild(new Text(callLines[0] + '  ' + status, 1, 0))
-      for (const line of callLines.slice(1)) this.addChild(new Text(line, 1, 0))
+      box.addChild(new Text(callLines[0] + '  ' + status, 0, 0))
+      for (const line of callLines.slice(1)) box.addChild(new Text(line, 0, 0))
     }
 
-    const body = renderResultView(row.resultView, row.text, theme, { isError: row.isError === true })
-    for (const line of body) this.addChild(new Text(line, 0, 0))
+    for (const line of renderResultView(row.resultView, row.text, theme, { isError: row.isError === true })) {
+      box.addChild(new Text(line, 0, 0))
+    }
 
     if (typeof row.errorReason === 'string' && row.errorReason !== '') {
-      this.addChild(new Text(theme.fg('error', '  ' + row.errorReason), 0, 0))
+      box.addChild(new Text(theme.fg('error', '  ' + row.errorReason), 0, 0))
     }
+
+    this.addChild(box)
   }
 }
 

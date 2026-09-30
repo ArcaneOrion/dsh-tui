@@ -194,10 +194,86 @@ test('createFooterInfo 在服务全缺时也能给出快照且不抛错', () => 
     cwd: '/tmp',
   })
   const snap = info.snapshot()
-  assert.equal(snap.model, 'p/m')
+  // 只显示模型名，不拼 provider——与 pi 的底栏一致。
+  assert.equal(snap.model, 'm')
+  assert.equal(snap.thinking, undefined)
   assert.equal(snap.dir, 'tmp')
   assert.equal(snap.tokens, undefined)
   assert.equal(snap.sandbox, undefined)
+})
+
+// ── 真实路由（读 request/header）─────────────────────────────────────────
+
+/** 造一个带若干 request/header 事件的假会话。 */
+function sessionWith(...headers) {
+  return {
+    seq: headers.length,
+    events: headers.map((config, i) => ({ seq: i + 1, type: 'request/header', data: { header: { config } } })),
+  }
+}
+
+test('createFooterInfo 优先用会话日志里「实际用的」路由', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({ session: sessionWith({ provider: 'real', model: 'real-model', reasoningEffort: 'max' }) }),
+    // 请求的是另一个；实际路由应当胜出。
+    getSelection: () => ({ provider: 'asked', model: 'asked-model' }),
+    cwd: '/tmp',
+  })
+  const snap = info.snapshot()
+  assert.equal(snap.model, 'real-model')
+  assert.equal(snap.thinking, 'max')
+})
+
+test('createFooterInfo 取的是**最后一条** request/header', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({
+      session: sessionWith({ provider: 'a', model: 'first' }, { provider: 'b', model: 'second' }),
+    }),
+    getSelection: () => undefined,
+    cwd: '/tmp',
+  })
+  assert.equal(info.snapshot().model, 'second')
+})
+
+test('没有 request/header 时退回 getSelection', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({ session: { seq: 0, events: [] } }),
+    getSelection: () => ({ provider: 'p', model: 'fallback' }),
+    cwd: '/tmp',
+  })
+  assert.equal(info.snapshot().model, 'fallback')
+})
+
+test('request/header 形状不对时不抛错，且不影响其它段', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({
+      session: {
+        seq: 2,
+        events: [
+          { type: 'request/header', data: { header: { config: null } } },
+          { type: 'request/header', data: {} },
+        ],
+      },
+    }),
+    getSelection: () => ({ provider: 'p', model: 'safe' }),
+    cwd: '/tmp',
+  })
+  assert.doesNotThrow(() => info.snapshot())
+  assert.equal(info.snapshot().model, 'safe')
+})
+
+test('thinking 段渲染成 think:<档位>，与 pi 同写法', () => {
+  const footer = makeFooter({ model: 'm', thinking: 'high' })
+  assert.match(footer.render(120).join('\n'), /think:high/)
+})
+
+test('没有 thinking 时该段整段消失', () => {
+  const footer = makeFooter({ model: 'm' })
+  assert.doesNotMatch(footer.render(120).join('\n'), /think:/)
 })
 
 test('createFooterInfo 有 tokenMeter 时给出用量，并按 seq 缓存', () => {

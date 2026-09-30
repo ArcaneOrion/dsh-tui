@@ -16,22 +16,45 @@ import { ToolCard } from './tool-cards.js'
 
 // ── 各角色默认渲染器 ─────────────────────────────────────────────────────
 
-/** 用户消息：整块带背景，便于和模型输出区分。 */
+/**
+ * 用户消息。
+ *
+ * 对齐 pi 的 `UserMessageComponent`：**上下各留一行**的有底色块，内容走 Markdown
+ * 而不是纯文本（所以用户贴的代码块/列表也会被正确渲染），底色与文字各用一个
+ * 专门的 token。
+ */
 export function userRenderer({ row, theme }) {
-  const box = new Box(1, 0, (s) => theme.bg('toolPendingBg', s))
-  box.addChild(new Text(theme.fg('userText', row.text), 0, 0))
+  const box = new Box(1, 1, (content) => theme.bg('userMessageBg', content))
+  box.addChild(
+    new Markdown(row.text, 0, 0, theme.markdown, { color: (content) => theme.fg('userMessageText', content) }),
+  )
   return box
 }
 
-/** 助手正文：Markdown 渲染（标题/列表/代码块/表格）。 */
+/**
+ * 助手正文。
+ *
+ * 对齐 pi 的 `AssistantMessageComponent`：正文**不铺底色**（方便复制），
+ * 只有思考块用 `thinkingText` + 斜体。
+ */
 export function assistantRenderer({ row, theme }) {
   const container = new Container()
-  if (typeof row.reasoning === 'string' && row.reasoning.trim() !== '') {
-    // 推理内容折叠成一行提示；展开是后续版本的事。
-    const lines = row.reasoning.split('\n').length
-    container.addChild(new Text(theme.fg('reasoningText', `✻ 思考（${lines} 行，已折叠）`), 1, 0))
+  const hasText = typeof row.text === 'string' && row.text.trim() !== ''
+  const hasThinking = typeof row.reasoning === 'string' && row.reasoning.trim() !== ''
+
+  if (hasThinking) {
+    // pi 的隐藏思考块是一行斜体标签；这里保持一致，但把行数也带上，
+    // 让人知道折叠了多少（pi 没带，这是本地的一点增益）。
+    const lines = row.reasoning.trim().split('\n').length
+    const label = lines > 1 ? `Thinking… (${lines} 行，已折叠)` : 'Thinking…'
+    container.addChild(new Text(theme.italic(theme.fg('thinkingText', label)), 1, 0))
   }
-  container.addChild(new Markdown(row.text, 1, 0, theme.markdown))
+
+  if (hasText) {
+    // 正文前留一行——与 pi 的 Spacer(1) 一致。
+    container.addChild(new Markdown(row.text, 1, 0, theme.markdown))
+  }
+
   if (row.interrupted === true) {
     container.addChild(new Text(theme.fg('warning', '（本回合被中断，以上为已生成部分）'), 1, 0))
   }
@@ -40,7 +63,7 @@ export function assistantRenderer({ row, theme }) {
 
 /** 推理片段（独立角色时使用）。 */
 export function reasoningRenderer({ row, theme }) {
-  return new Text(theme.fg('reasoningText', row.text), 1, 0)
+  return new Text(theme.italic(theme.fg('thinkingText', row.text)), 1, 0)
 }
 
 /**
