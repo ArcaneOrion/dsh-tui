@@ -20,6 +20,7 @@
  */
 
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { DefaultFooter } from './footer.js'
 import { WidgetPlacement } from './registry.js'
 
 /** 默认的工作动画帧。 */
@@ -128,52 +129,8 @@ export class ChatView {
 }
 
 /**
- * 默认底栏。
- *
- * 左半是状态片段（registry.setStatus），右半是模型/会话等运行信息。
- * 整体是一个可替换实现点：`registry.setFooter(...)` 换掉它。
+ * 回合进行中的动画行。
  */
-class DefaultFooter {
-  constructor({ theme, registry, getInfo }) {
-    this.theme = theme
-    this.registry = registry
-    this.getInfo = getInfo
-    this.cache = undefined
-    this.lastRevision = -1
-    this.lastWidth = -1
-  }
-
-  invalidate() {
-    this.cache = undefined
-  }
-
-  render(width) {
-    const info = this.getInfo()
-    const revisionKey = `${this.registry.revision}|${info.model}|${info.session}|${info.mode}`
-    if (this.cache !== undefined && this.lastWidth === width && this.lastRevision === revisionKey) {
-      return this.cache
-    }
-
-    const theme = this.theme
-    const left = this.registry.statusTexts().join(theme.fg('dim', ' │ ')) || theme.fg('dim', info.mode)
-
-    const rightParts = []
-    if (info.model !== undefined) rightParts.push(theme.fg('accent', info.model))
-    if (info.session !== undefined) rightParts.push(theme.fg('dim', info.session))
-    const right = rightParts.join(theme.fg('dim', ' · '))
-
-    const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right) - 2)
-    const body = ' ' + left + ' '.repeat(gap) + right + ' '
-    const border = theme.fg('border', '─'.repeat(width))
-
-    this.cache = [border, truncateToWidth(body, width)]
-    this.lastWidth = width
-    this.lastRevision = revisionKey
-    return this.cache
-  }
-}
-
-/** 回合进行中的动画行。 */
 class WorkingLine {
   constructor({ theme, registry, getState }) {
     this.theme = theme
@@ -224,11 +181,12 @@ class WorkingLine {
  * @param {(text:string)=>void} options.onSubmit   - 用户提交了一行输入
  * @param {()=>void} options.onInterrupt           - 请求中断当前回合
  * @param {()=>void} options.onExit                - 请求退出
- * @param {()=>({model?:string,session?:string,mode?:string})} options.getInfo
+ * @param {()=>({model?:string,session?:string,mode?:string})} options.getSnapshot - 状态栏数据快照（每帧同步取）
+ * @param {()=>string|undefined} [options.getSessionLabel] - 右对齐的会话短标签
  * @param {()=>({turnActive:boolean,statusText?:string})} options.getState
  */
 export function createApp(options) {
-  const { view, theme, registry, onSubmit, onInterrupt, onExit, getInfo, getState } = options
+  const { view, theme, registry, onSubmit, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
 
   const terminal = new ProcessTerminal()
   const tui = new TUI(terminal)
@@ -283,7 +241,7 @@ export function createApp(options) {
 
   function rebuildFooter() {
     footerSlot.clear()
-    footer = registry.footer ?? new DefaultFooter({ theme, registry, getInfo })
+    footer = registry.footer ?? new DefaultFooter({ theme, registry, getSnapshot, getSessionLabel })
     footerSlot.addChild(footer)
   }
 

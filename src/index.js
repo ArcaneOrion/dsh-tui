@@ -13,6 +13,7 @@
  */
 
 import { createApp } from './app.js'
+import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { createKernel } from './kernel.js'
 import { installDefaultRenderers } from './messages.js'
@@ -142,6 +143,14 @@ export async function apply(ctx) {
   const modelLabel =
     kernel.selection === undefined ? '' : [kernel.selection.provider, kernel.selection.model].filter(Boolean).join('/')
 
+  // 底栏的数据源。它负责所有取数（token 计量、沙箱模式、git 分支、模型窗口），
+  // 组件本身只做纯渲染。任何一个服务缺失都会让对应那一段消失，而不是显示假数据。
+  const footerInfo = createFooterInfo({
+    ctx,
+    getAgent: () => kernel.agent,
+    getSelection: () => kernel.selection,
+  })
+
   // createApp 会构造真实的终端对象（ProcessTerminal / Editor），这一步可能抛。
   // 抛了就必须把已经建起来的 agent 与监听全部回收，否则每失败一次泄漏一个会话。
   try {
@@ -158,11 +167,8 @@ export async function apply(ctx) {
       onExit: () => {
         void shutdown(0)
       },
-      getInfo: () => ({
-        model: modelLabel === '' ? undefined : modelLabel,
-        session: kernel.sessionId.slice(0, 8),
-        mode: 'dsh-tui',
-      }),
+      getSnapshot: () => footerInfo.snapshot(),
+      getSessionLabel: () => shortSessionId(kernel.sessionId),
       getState: () => ({
         turnActive: view.turnActive === true,
         statusText: view.turnActive === true ? 'working' : undefined,
@@ -173,8 +179,8 @@ export async function apply(ctx) {
     throw new Error(`dsh-tui: failed to mount the terminal UI — ${error?.message ?? error}`)
   }
 
-  registry.setStatus('session', theme.fg('dim', kernel.sessionId.slice(0, 8)))
-  if (modelLabel !== '') registry.setStatus('model', theme.fg('accent', modelLabel))
+  // 模型上下文窗口只能异步解析，预热一次即可；失败就永远不显示上限那半截。
+  void footerInfo.warmUp()
 
   try {
     app.start()
@@ -220,6 +226,18 @@ export async function apply(ctx) {
   })
 
   ctx.get('logger')?.info?.(`dsh-tui: mounted session ${kernel.sessionId} (${modelLabel || 'default model'})`)
+}
+
+/**
+ * 会话 id 的短标签。
+ *
+ * dsh 的会话 id 形如 `session-<uuid>`，所以**不能**直接 `slice(0, 8)`——
+ * 那只会切出 `session-` 这个前缀，uuid 一位都不显示（这是实机上踩到的）。
+ */
+export function shortSessionId(id) {
+  const raw = String(id ?? '')
+  const stripped = raw.replace(/^session-/, '')
+  return (stripped === '' ? raw : stripped).slice(0, 8)
 }
 
 /**
