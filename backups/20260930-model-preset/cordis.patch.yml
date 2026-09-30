@@ -1,0 +1,33 @@
+# @arcaneorion/dsh-tui —— 终端前门 bundle 补丁
+#
+# 铁在 dsh-base 之上。内核（llm / session / agent / tools / 沙箱 / 审批 /
+# 命令 / 存储 / 会话持久化）全部来自 dsh-base；本 bundle 只提供「表面」：
+# 终端渲染、输入，以及 dsh 事件到界面组件的投影。
+#
+# 补丁语义提醒：带 id 的覆盖会**整体替换**目标行的 config，不是深合并，
+# 所以每一行都要重述它拥有的全部键。
+
+# 交互式 TUI 不需要模块热重载。
+# base 的默认是 `!!js "!ctx.get('profileContext')"`——在 profile 启动时
+# profileContext 存在，所以 hmr 默认是**开启**的，必须显式关掉。
+- id: hmr
+  disabled: true
+
+# 这个表面的人格。DSH_TUI_PERSONA 可覆盖。
+# 注意：dsh-system-prompt >= 0.1.3-alpha.2 的键名是 personaPrefix
+# （更早的世代叫 persona）。本 bundle 的 peer 范围锁在 0.2.0-rc.1。
+- id: system-prompt
+  config:
+    personaPrefix: !!js process.env.DSH_TUI_PERSONA ?? 'You are a coding agent powered by the DeepSeek Harness.'
+
+- insert:
+    # 解析本 TUI 自己的命令行旗标，发布 dshTuiStartup 服务。
+    - id: dsh-tui-startup
+      name: '@arcaneorion/dsh-tui/startup'
+
+    # 前门本体。
+    # 入口级 inject 只用于保证挂载顺序；插件代码级 inject 故意保持最小，
+    # 缺服务时应当降级而不是让整棵树死等（"pending (waiting for service)"）。
+    - id: dsh-tui
+      name: '@arcaneorion/dsh-tui'
+      inject: [dshTuiStartup, agents, sessions, agentDefaultModel]

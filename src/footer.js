@@ -149,11 +149,11 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   let eventTail
 
   /**
-   * 最近一次请求**实际用的**路由。
+   * 最近一次请求**实际用的**路由（fallback）。
    *
-   * 读会话日志里最后一条 `request/header` 的 `config`——它记录的是真正发出去的
-   * provider/model/reasoningEffort，比「本次会话请求用什么」准确（用户可能
-   * 用 --model 覆盖、或 roundrobin 换了候选）。
+   * 优先级：`getSelection()`（下一步要用的路由，/model 运行时切换会立即更新它）
+   * 高于会话日志里最后一条 `request/header`（上一次实际用的）。历史路由只在
+   * 没有任何可用选择时兜底——底栏显示的是「下一步将用什么」。
    *
    * 用增量读（`createEventTail`）而不是每次全量扫：这个函数每帧都会被调用，
    * 全量扫会退化成 O(n²)。**注意活会话要用 `eventAt(seq)`**——`session.events`
@@ -255,9 +255,10 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       const selection = getSelection()
       const route = latestRoute()
 
-      // 优先用「实际用的」，退回「请求的」。只显示模型名——与 pi 的底栏一致，
-      // provider 太长且通常在 extension status 里另有出处。
-      const model = route?.model ?? selection?.model
+      // 优先「下一步要用的」（getSelection，/model 切换立即生效），退回
+      // 「上一次实际用的」（request/header）。只显示模型名——与 pi 的底栏一致。
+      const model = selection?.model ?? route?.model
+      const effort = selection?.reasoningEffort ?? route?.effort
 
       const used = measureTokens()
       // 用 path.basename 而不是 split('/')：后者在 Windows 上会把整个路径
@@ -265,7 +266,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       const base = path.basename(cwd)
       return {
         model,
-        thinking: route?.effort,
+        thinking: effort,
         dir: base === '' ? cwd : base,
         branch: readGitBranch(cwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: contextLimit },

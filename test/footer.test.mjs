@@ -212,16 +212,41 @@ function sessionWith(...headers) {
   }
 }
 
-test('createFooterInfo 优先用会话日志里「实际用的」路由', () => {
+test('createFooterInfo 优先用 getSelection（下一步要用的路由）', () => {
   const info = createFooterInfo({
     ctx: { get: () => undefined },
     getAgent: () => ({ session: sessionWith({ provider: 'real', model: 'real-model', reasoningEffort: 'max' }) }),
-    // 请求的是另一个；实际路由应当胜出。
-    getSelection: () => ({ provider: 'asked', model: 'asked-model' }),
+    // /model 运行时切换后 getSelection 立即变成下一步要用的路由，必须胜出。
+    getSelection: () => ({ provider: 'asked', model: 'asked-model', reasoningEffort: 'low' }),
+    cwd: '/tmp',
+  })
+  const snap = info.snapshot()
+  assert.equal(snap.model, 'asked-model')
+  assert.equal(snap.thinking, 'low')
+})
+
+test('createFooterInfo 没有 selection 时退回会话日志的实际路由', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({ session: sessionWith({ provider: 'real', model: 'real-model', reasoningEffort: 'max' }) }),
+    getSelection: () => undefined,
     cwd: '/tmp',
   })
   const snap = info.snapshot()
   assert.equal(snap.model, 'real-model')
+  assert.equal(snap.thinking, 'max')
+})
+
+test('createFooterInfo selection 缺 effort 时借用实际路由的 effort', () => {
+  const info = createFooterInfo({
+    ctx: { get: () => undefined },
+    getAgent: () => ({ session: sessionWith({ provider: 'real', model: 'real-model', reasoningEffort: 'max' }) }),
+    // /model 直切不带 effort：显示上一次实际用的档位，比空白诚实。
+    getSelection: () => ({ provider: 'asked', model: 'asked-model' }),
+    cwd: '/tmp',
+  })
+  const snap = info.snapshot()
+  assert.equal(snap.model, 'asked-model')
   assert.equal(snap.thinking, 'max')
 })
 

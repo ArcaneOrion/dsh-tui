@@ -33,6 +33,8 @@ Interactive terminal front door for the DeepSeek Harness.
 Options:
   -r, --resume <session-id>   resume a persisted session instead of starting a new one
   -m, --model <provider/model>  override the model route for this session
+  --effort <effort-id>        override the reasoning effort for this session
+  -p, --preset <preset-id>      select the agent capability preset for this session
   -h, --help                  show this help
   --                          everything after this is literal prompt text
 
@@ -53,6 +55,9 @@ const VALUE_FLAGS = {
   '--resume': 'resume',
   '-m': 'model',
   '--model': 'model',
+  '--effort': 'effort',
+  '-p': 'preset',
+  '--preset': 'preset',
 }
 
 /**
@@ -61,10 +66,10 @@ const VALUE_FLAGS = {
  * 纯函数，不读 process.argv、不写任何东西，方便单测。
  *
  * @param {readonly string[]} argv - `ctx.cmdlineArgs` 的值
- * @returns {{prompt:string, resume:string|undefined, model:string|undefined, help:boolean, error:string|undefined}}
+ * @returns {{prompt:string, resume:string|undefined, model:string|undefined, effort:string|undefined, preset:string|undefined, help:boolean, error:string|undefined}}
  */
 export function parseArgs(argv) {
-  const result = { prompt: '', resume: undefined, model: undefined, help: false, error: undefined }
+  const result = { prompt: '', resume: undefined, model: undefined, effort: undefined, preset: undefined, help: false, error: undefined }
   const words = []
   const args = Array.isArray(argv) ? argv : []
   let literal = false
@@ -196,5 +201,7 @@ export function apply(ctx) {
     prompt: parsed.prompt,
     resume: parsed.resume,
     model: parsed.model,
+    reasoningEffort: parsed.effort,
+    preset: parsed.preset,
   })
 }

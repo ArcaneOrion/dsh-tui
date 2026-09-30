@@ -17,8 +17,7 @@ import { MessageRole } from './registry.js'
 /** 本地命令：TUI 自己处理，不经过内核。 */
 export const LOCAL_COMMANDS = Object.freeze([
   { name: 'help', description: '列出所有可用命令' },
-  { name: 'model', description: '查看或选择渠道与模型（/model）' },
-  { name: 'preset', description: '查看或选择会话预设（/preset）' },
+  { name: 'model', description: '查看或设置默认模型（/model provider/model）' },
   { name: 'doctor', description: '自检：哪些内核服务接上了、哪些没有' },
   { name: 'exit', description: '退出' },
   { name: 'quit', description: '退出（同 /exit）' },

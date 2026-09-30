@@ -25,7 +25,6 @@ import { installInteractive } from './interactive.js'
 import { logTerminalState, tapStdin } from './keylog.js'
 import { combineAutocomplete, createFileIndex, createMentionAutocomplete } from './mentions.js'
 import { createPrefs } from './prefs.js'
-import { loadModelCatalog, modelOptions, parseModelRef, providerOptions, reasoningOptions } from './model-catalog.js'
 import { collectStartupSections } from './startup-info.js'
 
 const pkg = createRequire(import.meta.url)('../package.json')
@@ -220,91 +219,8 @@ export async function apply(ctx) {
     else process.exit(code)
   }
 
-  let modelLabel =
+  const modelLabel =
     kernel.selection === undefined ? '' : [kernel.selection.provider, kernel.selection.model].filter(Boolean).join('/')
-  let presetLabel = kernel.preset ?? ''
-  let modelCatalog
-  let modelCatalogPromise
-  let runtimeModelLabel = modelLabel
-
-  async function getModelCatalog() {
-    if (modelCatalog !== undefined) return modelCatalog
-    if (modelCatalogPromise !== undefined) return modelCatalogPromise
-    modelCatalogPromise = loadModelCatalog(ctx.get('llm')).then((catalog) => {
-      modelCatalog = catalog
-      modelCatalogPromise = undefined
-      return catalog
-    })
-    return modelCatalogPromise
-  }
-
-  async function selectModelInteractively() {
-    const catalog = await getModelCatalog()
-    if (catalog.providers.length === 0) {
-      app?.notice?.(['没有可用的已注册渠道。', ...catalog.errors.map((x) => `  · ${x}`)].join('\n'))
-      return
-    }
-    const provider = await app.choose({
-      title: '选择渠道商',
-      detail: catalog.dormant.length > 0 ? `另有 ${catalog.dormant.length} 个渠道已声明但尚未激活` : undefined,
-      options: providerOptions(catalog),
-    })
-    if (provider === undefined) return
-    const providerRow = catalog.providers.find((row) => row.provider === provider)
-    const model = await app.choose({ title: `选择模型 · ${providerRow?.name ?? provider}`, options: modelOptions(providerRow) })
-    if (model === undefined) return
-    let reasoningEffort
-    try {
-      const info = await ctx.get('llm')?.resolveModelInfo?.(provider, model)
-      const efforts = reasoningOptions(info)
-      if (efforts.length > 0) reasoningEffort = await app.choose({ title: '选择推理强度', options: efforts })
-      // 取消推理强度选择只取消该层，不取消模型选择；undefined 表示 provider 默认。
-    } catch (error) {
-      app?.notice?.(`模型元数据读取失败，将使用提供方默认推理强度：${error?.message ?? error}`)
-    }
-    try {
-      const selected = await kernel.selectModel({ provider, model, reasoningEffort })
-      runtimeModelLabel = `${selected.provider}/${selected.model}`
-      modelLabel = runtimeModelLabel
-      prefs.write({ model: runtimeModelLabel })
-      app?.notice?.(
-        `已切换模型：${runtimeModelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}` +
-          `\n下一步请求生效，当前正在运行的请求不变。${selected.defaultSaved === false ? `\n（注意：默认值保存失败，重开后会回到原默认——${prefs.file}）` : ''}`,
-      )
-      app?.requestRender?.()
-    } catch (error) {
-      app?.notice?.(`模型切换失败：${error?.message ?? error}`)
-    }
-  }
-
-  async function selectPresetInteractively() {
-    const presets = ctx.get('agentPresets')
-    if (presets === undefined || typeof presets.list !== 'function') {
-      app?.notice?.('当前 profile 未启用会话预设。需要挂载 agent-preset-registry 与 preset 定义。')
-      return
-    }
-    const rows = await presets.list()
-    const available = rows.filter((row) => row?.broken === undefined)
-    if (available.length === 0) {
-      app?.notice?.('没有可用的会话预设。')
-      return
-    }
-    const chosen = await app.choose({
-      title: '选择会话预设',
-      options: available.map((row) => ({
-        value: row.id,
-        label: `${row.name ?? row.id}${row.id === presetLabel ? '  ✓' : ''}`,
-        description: row.description ?? row.id,
-      })),
-    })
-    if (chosen === undefined || chosen === presetLabel) return
-    try {
-      presetLabel = await kernel.selectPreset(chosen)
-      app?.notice?.(`已选择预设：${presetLabel}`)
-    } catch (error) {
-      app?.notice?.(`预设切换失败：${error?.message ?? error}`)
-    }
-  }
 
   // 底栏的数据源。它负责所有取数（token 计量、沙箱模式、git 分支、模型窗口），
   // 组件本身只做纯渲染。任何一个服务缺失都会让对应那一段消失，而不是显示假数据。
@@ -341,7 +257,6 @@ export async function apply(ctx) {
       `  tokenMeter   ${mark('tokenMeter')}   ← 底栏用量段`,
       `  sandboxPolicy ${mark('sandboxPolicy')}   ← 底栏沙箱段`,
       `  llm          ${mark('llm')}   ← 底栏上下文上限`,
-      `  agentPresets ${mark('agentPresets')}   ← /preset 会话预设`,
       `  approval     ${mark('approval')}   ← 授权弹窗`,
       `  userQuestions ${mark('userQuestions')}   ← 提问弹窗`,
       `  偏好文件     ${prefs.file}`,
@@ -368,39 +283,23 @@ export async function apply(ctx) {
       }
       if (parsed.name === 'model') {
         if (parsed.rest === '') {
-          const current = kernel.selection === undefined ? '(内核默认)' : `${kernel.selection.provider}/${kernel.selection.model}`
-          app?.notice?.(`当前模型：${current}\n正在打开渠道/模型选择…（也可直接输入 /model provider/model）`)
-          await selectModelInteractively()
+          const current =
+            kernel.selection === undefined ? '(内核默认)' : `${kernel.selection.provider}/${kernel.selection.model}`
+          app?.notice?.(
+            `当前模型：${current}\n记忆的默认：${prefs.read().model ?? '(无)'}\n用法：/model provider/model`,
+          )
           return
         }
-        const requested = parseModelRef(parsed.rest)
-        if (requested === undefined) {
-          app?.notice?.('/model 需要 provider/model 形式，例如 /model my-opencode-go/deepseek-v4.1-flash')
+        if (!parsed.rest.includes('/')) {
+          app?.notice?.('/model 需要 provider/model 形式，例如 /model deepseek-official/deepseek-flash')
           return
         }
-        try {
-          const selected = await kernel.selectModel(requested)
-          runtimeModelLabel = `${selected.provider}/${selected.model}`
-          modelLabel = runtimeModelLabel
-          const result = prefs.write({ model: runtimeModelLabel })
-          app?.notice?.(`已切换模型：${runtimeModelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}\n下一步请求生效。${result.ok ? '默认值也已保存。' : `默认值保存失败：${prefs.file}`}`)
-          app?.requestRender?.()
-        } catch (error) {
-          app?.notice?.(`模型切换失败：${error?.message ?? error}`)
-        }
-        return
-      }
-      if (parsed.name === 'preset') {
-        if (parsed.rest === '') {
-          await selectPresetInteractively()
-          return
-        }
-        try {
-          presetLabel = await kernel.selectPreset(parsed.rest)
-          app?.notice?.(`已选择预设：${presetLabel}`)
-        } catch (error) {
-          app?.notice?.(`预设切换失败：${error?.message ?? error}`)
-        }
+        const result = prefs.write({ model: parsed.rest })
+        app?.notice?.(
+          result.ok
+            ? `已记住默认模型：${result.value.model}\n本次会话仍是 ${modelLabel === '' ? '内核默认' : modelLabel}（切换模型需要重开会话）`
+            : `无法写入偏好文件（${prefs.file}）——本次设置**没有保存**`,
+        )
         return
       }
       return

@@ -32,6 +32,8 @@ test('parseArgs：单个词作为提示词', () => {
     prompt: 'run',
     resume: undefined,
     model: undefined,
+    effort: undefined,
+    preset: undefined,
     help: false,
     error: undefined,
   })
@@ -49,6 +51,15 @@ test('parseArgs：--resume 与 -r 等价', () => {
 test('parseArgs：--model 与 -m 等价', () => {
   assert.equal(startup.parseArgs(['--model', 'deepseek/flash']).model, 'deepseek/flash')
   assert.equal(startup.parseArgs(['-m', 'deepseek/flash']).model, 'deepseek/flash')
+})
+
+test('parseArgs：--preset 与 -p 等价，--effort 独立取值', () => {
+  assert.equal(startup.parseArgs(['--preset', 'standard']).preset, 'standard')
+  assert.equal(startup.parseArgs(['-p', 'ptc']).preset, 'ptc')
+  assert.equal(startup.parseArgs(['--effort', 'max']).effort, 'max')
+  const combined = startup.parseArgs(['-p', 'standard', '--effort=high'])
+  assert.equal(combined.preset, 'standard')
+  assert.equal(combined.effort, 'high')
 })
 
 test('parseArgs：支持 --key=value 形式', () => {

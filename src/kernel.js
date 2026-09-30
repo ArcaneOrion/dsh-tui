@@ -22,7 +22,7 @@ import { readSessionEvents } from './session-events.js'
  * 决定本次会话的模型路由。
  * 优先 `--model provider/model`，否则用内核的中立默认（ctx.agentDefaultModel）。
  *
- * @returns {{provider:string,model:string}|undefined} 拿不到可用选择时返回
+ * @returns {{provider:string,model:string,reasoningEffort?:string}|undefined} 拿不到可用选择时返回
  *   `undefined`，**不是** `{provider:undefined,model:undefined}`。后者是一个
  *   「字段齐全但值为 undefined」的假对象，交给 `installModelSelection` 会被
  *   当成一次真实选择，从而把 undefined 当模型名去发请求。
@@ -31,14 +31,32 @@ export function resolveSelection(ctx, startup) {
   const override = startup?.model
   if (typeof override === 'string' && override.includes('/')) {
     const idx = override.indexOf('/')
-    const provider = override.slice(0, idx)
-    const model = override.slice(idx + 1)
-    if (provider !== '' && model !== '') return { provider, model }
+    const provider = override.slice(0, idx).trim()
+    const model = override.slice(idx + 1).trim()
+    if (provider !== '' && model !== '') {
+      return {
+        provider,
+        model,
+        ...(typeof startup?.reasoningEffort === 'string' && startup.reasoningEffort !== ''
+          ? { reasoningEffort: startup.reasoningEffort }
+          : {}),
+      }
+    }
   }
 
-  const current = ctx.get('agentDefaultModel')?.currentSelection?.()
-  if (typeof current?.provider === 'string' && typeof current?.model === 'string') {
-    return { provider: current.provider, model: current.model }
+  try {
+    const current = ctx.get('agentDefaultModel')?.currentSelection?.()
+    if (typeof current?.provider === 'string' && typeof current?.model === 'string') {
+      return {
+        provider: current.provider,
+        model: current.model,
+        ...(typeof current.reasoningEffort === 'string' && current.reasoningEffort !== ''
+          ? { reasoningEffort: current.reasoningEffort }
+          : {}),
+      }
+    }
+  } catch {
+    // A missing or partially mounted default-model service is equivalent to no selection.
   }
   return undefined
 }
@@ -75,16 +93,125 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   /** @type {import('@deepseek-ai/dsh-agent').Agent | undefined} */
   let agent
 
-  const selection = resolveSelection(ctx, startup)
-  // 拿不到选择时**整个省略** agentOptions，而不是塞一个字段为 undefined 的对象：
-  // 后者会被 adapter 当作一次显式路由，拿 undefined 当模型名去发请求。
-  const agentOptions = selection === undefined ? {} : { provider: selection.provider, model: selection.model }
+  /**
+   * Mutable selection is intentional: dsh-agent's installModelSelection reads
+   * `current` at every next step, so /model can take effect without destroying
+   * the live agent or its session history.
+   */
+  const selectionRef = { current: resolveSelection(ctx, startup), assembled: undefined }
+  const presetService = ctx.get('agentPresets')
+  const projectionService = ctx.get('sessionProjections')
+  let selectedPreset
+  const resuming = typeof startup?.resume === 'string' && startup.resume !== ''
+  // 显式 --model 在 resume 时也必须赢：它比日志里记录的路由更新。
+  const explicitModel =
+    typeof startup?.model === 'string' && startup.model.includes('/')
 
-  const setup = (agentCtx) => {
-    // 把选定的模型路由耦合到该 agent 的装配与请求路由上。
-    // `current: undefined` 是合法语义，表示「本会话不覆盖路由」。
-    installModelSelection(agentCtx, { current: selection, assembled: undefined })
+  if (startup?.preset !== undefined && (presetService === undefined || typeof presetService.mount !== 'function')) {
+    throw new Error('会话预设服务不可用；此 TUI profile 尚未启用 agent-preset-registry')
   }
+  if (presetService !== undefined) {
+    // preset 行的注册发生在各自行的 Service.init 里，与本插件的 apply() **并发**。
+    // 不能 await ctx.loader（装载树在等本行激活，会死锁——实机已复现：进程静默
+    // 挂起、TUI 永不渲染）。改为有界轮询 resolve()，定义就绪即通过。
+    const requested = startup?.preset ?? presetService.defaultId
+    const deadline = Date.now() + 20_000
+    let resolved
+    for (;;) {
+      try {
+        resolved = await presetService.resolve(requested)
+        break
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw new Error(`会话预设 "${requested}" 在 20s 内未就绪（${error?.message ?? error}）——preset 声明与本 bundle 必须同装`)
+        }
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 250).unref?.())
+      }
+    }
+    if (!resuming) {
+      if (resolved?.broken !== undefined) throw new Error(`预设 ${resolved.id} 不可用：${resolved.broken}`)
+      selectedPreset = resolved?.id
+    }
+  }
+
+  // 拿不到选择时**整个省略** agentOptions，而不是塞一个字段为 undefined 的对象。
+  const selectionOptions = () => {
+    const selection = selectionRef.current
+    return selection === undefined
+      ? {}
+      : {
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+        }
+  }
+
+  function restoreSelectionFromSession(session) {
+    let restored
+    try {
+      for (const event of readSessionEvents(session)) {
+        if (event?.type !== 'model/selection') continue
+        const data = event.data
+        if (typeof data?.provider !== 'string' || typeof data?.model !== 'string') continue
+        restored = {
+          provider: data.provider,
+          model: data.model,
+          ...(typeof data.reasoningEffort === 'string' && data.reasoningEffort !== ''
+            ? { reasoningEffort: data.reasoningEffort }
+            : {}),
+        }
+      }
+    } catch {
+      // A malformed/old log must not prevent resume; fall through to its header.
+    }
+    if (restored !== undefined) return restored
+    const route = session?.requestHeader?.()?.config
+    if (typeof route?.provider !== 'string' || typeof route?.model !== 'string') return undefined
+    return {
+      provider: route.provider,
+      model: route.model,
+      ...(typeof route.reasoningEffort === 'string' && route.reasoningEffort !== ''
+        ? { reasoningEffort: route.reasoningEffort }
+        : {}),
+    }
+  }
+
+  const setup = async (agentCtx, agent) => {
+    if (resuming && explicitModel !== true) {
+      // 恢复路由的优先级：durable `model/selection`（最新的 pending）→
+      // 上一次 request/header → 什么都不设（用内核默认）。显式 --model 始终最高。
+      const restored = restoreSelectionFromSession(agent?.session)
+      if (restored !== undefined) selectionRef.current = restored
+    }
+
+    if (presetService !== undefined && typeof presetService.mount === 'function') {
+      let presetId = selectedPreset
+      if (resuming) {
+        // 恢复预设的优先级：durable `agent-preset/selected`（projection）→
+        // 不可变 header → registry 默认。**绝不**让新默认覆盖历史会话的组合——
+        // 否则 resume 后模型看到的工具目录和日志里记录的工具调用会对不上。
+        try {
+          const persisted = projectionService?.stateOf?.(agent.session, 'agentPreset')
+          if (typeof persisted === 'string' && persisted !== '') presetId = persisted
+        } catch {
+          // 旧 profile 没有 agentPreset projection，落到 header。
+        }
+        if (presetId === undefined && typeof agent.session.header?.agentPreset === 'string') {
+          presetId = agent.session.header.agentPreset
+        }
+        if (presetId === undefined) presetId = presetService.defaultId
+        const resolved = await presetService.resolve(presetId)
+        if (resolved?.broken !== undefined) throw new Error(`恢复预设 ${resolved.id} 不可用：${resolved.broken}`)
+        selectedPreset = resolved?.id
+      }
+      const mounted = await presetService.mount(agentCtx, presetId)
+      selectedPreset = mounted?.id ?? presetId
+    }
+
+    installModelSelection(agentCtx, selectionRef)
+  }
+
+  const agentOptions = selectionOptions()
 
   const emit = (type, payload) => {
     try {
@@ -96,7 +223,6 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
 
   // ── 建 / 恢复 agent ────────────────────────────────────────────────────
 
-  const resuming = typeof startup?.resume === 'string' && startup.resume !== ''
   if (resuming) {
     handle = await ctx.agents.resume({
       resumeSessionId: SessionId(startup.resume),
@@ -107,7 +233,10 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     sessionId = SessionId(`session-${randomUUID()}`)
     handle = await ctx.agents.create({
       sessionId,
-      meta: { cwd: process.cwd() },
+      meta: {
+        cwd: process.cwd(),
+        ...(selectedPreset === undefined ? {} : { agentPreset: selectedPreset }),
+      },
       agentOptions,
       setup,
     })
@@ -182,7 +311,12 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     }),
   )
 
-  emit('ready', { selection, sessionId: String(boundSessionId), resumed: resuming })
+  emit('ready', {
+    selection: selectionRef.current,
+    preset: selectedPreset,
+    sessionId: String(boundSessionId),
+    resumed: resuming,
+  })
 
   // ── 驱动 ──────────────────────────────────────────────────────────────
 
@@ -260,7 +394,60 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
       return String(boundSessionId)
     },
     get selection() {
-      return selection
+      return selectionRef.current
+    },
+    get preset() {
+      return selectedPreset
+    },
+    async selectModel(next) {
+      if (agent === undefined) throw new Error('会话还没建立，无法切换模型')
+      const provider = typeof next?.provider === 'string' ? next.provider : ''
+      const model = typeof next?.model === 'string' ? next.model : ''
+      if (provider === '' || model === '') throw new Error('模型选择必须包含 provider 和 model')
+
+      const llm = ctx.get('llm')
+      if (llm === undefined || typeof llm.resolveCallConfig !== 'function') {
+        throw new Error('当前 profile 没有可用的 LLM 校验服务')
+      }
+      const resolved = await llm.resolveCallConfig({
+        provider,
+        model,
+        ...(typeof next.reasoningEffort === 'string' && next.reasoningEffort !== ''
+          ? { reasoningEffort: next.reasoningEffort }
+          : {}),
+      })
+      const selected = {
+        provider: resolved.provider,
+        model: resolved.model,
+        ...(resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort }),
+      }
+
+      // Canonical durable event + the same mutable selection seam used by the
+      // agent loop. Existing turns stay intact; the next request uses selected.
+      agent.session.append('model/selection', selected)
+      selectionRef.current = selected
+      let defaultSaved = true
+      try {
+        await ctx.get('agentDefaultModel')?.saveSelection?.(selected)
+      } catch (error) {
+        // Session-local selection succeeded; default persistence is best effort
+        // and the caller must be able to report it honestly (假成功是大敌).
+        defaultSaved = false
+        onEvent?.({ type: 'model-save-warning', payload: error })
+      }
+      onUpdate?.()
+      return { ...selected, defaultSaved }
+    },
+    async selectPreset(id) {
+      if (agent === undefined) throw new Error('会话还没建立，无法切换预设')
+      if (typeof id !== 'string' || id.trim() === '') throw new Error('预设 id 不能为空')
+      if (presetService === undefined || typeof presetService.select !== 'function') {
+        throw new Error('当前 profile 没有启用会话预设')
+      }
+      const selected = await presetService.select(agent, id.trim())
+      selectedPreset = selected
+      onUpdate?.()
+      return selected
     },
   }
 }
