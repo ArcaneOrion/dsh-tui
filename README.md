@@ -190,9 +190,10 @@ profile 用 `link:` 安装本插件时，`node_modules/@arcaneorion/dsh-tui` 是
 ```
 /model                              # 渠道 → 模型 → 推理强度 三级弹窗（真实 llm 目录）
 /model my-opencode-go/deepseek-v4.1-flash
-/model roundrobin/round-glm-5-3f/deepseek-v4.1-flash   # 虚拟轮询组也支持
+/model roundrobin/round-glm-5-3f/round-glm-5-3f   # 虚拟轮询组也支持
 ```
 
+弹窗**即输即搜**（子序列匹配、退化到子串，`Backspace` 退格），底部居中贴输入框弹出。
 切换语义与内核 canonical 一致：`llm.resolveCallConfig` 先校验（无效渠道/模型/强度直接报错）→
 写入 durable `model/selection` 事件（resume 后仍然有效）→ 更新可变 selection ref（**下一步请求生效**，
 正在运行的请求不受影响）→ 后台保存为新默认（保存失败会如实提示）。

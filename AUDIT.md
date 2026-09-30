@@ -490,3 +490,32 @@ Promise 结算回内核 → 通知行确认 → 模型继续。
 - `/preset` 不支持已有回合的会话（内核契约 `agent-preset/locked`；预设决定工具目录，热切会破坏日志一致性）。
 - `resume` 恢复预设的优先级：projection → header → registry 默认；显式 `--preset` 只对新会话生效。
 - 未接 `sessionController.selectModel`（需 Host controller 全家桶）；TUI 用「durable 事件 + 可变 ref」实现等价语义，durable 事件是内建词汇，重建行为一致。
+
+---
+
+## 第 9 轮 · UI 打磨（用户截图驱动）
+
+**触发**：用户实机截图指出三点——弹窗位置不对、UI 配色差、渠道选择无搜索。
+
+### 修了什么
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| 弹窗悬在屏幕中央，离输入框太远 | `anchor: 'center'` | 改 `bottom-center` + `offsetY: -3`，贴输入框上方 |
+| 弹窗是一整块亮灰板 | frame 用 `selectedBg` 刷全部行 | 新增暗面板色 `panelBg (#161a29)`，标题用 accent 强调 |
+| 无搜索 | 只用 SelectList 上下键 | 拦截层即输即搜：`fuzzyFilter` 子序列匹配 → 退化为子串；过滤行实时回显 |
+| 底栏全灰 | 每段同色 | 对照 pi 逐段配色：模型白 / `think:` 黄 / `dir` 青 / `⎇ 分支` 紫 / 分隔线琥珀 `#c1843a` |
+
+### 本轮实测抓到的两个真 bug（都静默失败型）
+
+1. **过滤永远不生效**：`applyFilter()` 每次新建 SelectList 实例，但挂在外框里的是旧实例——输入被吃掉、界面纹丝不动。修法：实例只建一次，过滤时原地更新 `items/filteredItems/selectedIndex`（SelectList 的公开字段）。
+2. **弹窗无声消失**：过滤行闭包组件引用了 `createPrompter` 闭包里的 `theme`，但 `searchableList` 在模块层定义——`ReferenceError: theme is not defined` 被 `forwarding` 的 onError 静默吞掉后 `finish(undefined)` 关窗。修法：theme 作参数传入；onError 加 `DSH_TUI_DEBUG_PROMPT=1` 诊断输出。
+
+**教训（第 5 轮的回响）**：「没有任何报错」≠「没出错」。onError 静默结算是 P0 模式——它把异常变成 UI 的诡异行为。
+
+### 验证记录（PTY，全部真实按键）
+
+- 输入 `round` → 65 项实时过滤为 9 个 roundrobin 组。
+- 全流程：搜索 `round-glm-5-3f` → Enter → 选模型 → Enter → 选强度 `off` →
+  `已切换模型：roundrobin/round-glm-5-3f/round-glm-5-3f`，banner/footer 即时更新。
+- 277 测试全绿（footer 断言改为剥 ANSI 后匹配多色段）。
