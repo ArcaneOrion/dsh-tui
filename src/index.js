@@ -12,11 +12,19 @@
  * 本文件只负责：判定启动身份 → 装配上述各层 → 接退出路径。
  */
 
+import { createRequire } from 'node:module'
+
 import { createApp } from './app.js'
-import { createCommandSystem, helpText, parseCommandLine } from './commands.js'
+import { createBanner } from './banner.js'
+import { createCommandAutocomplete, createCommandSystem, helpText, parseCommandLine } from './commands.js'
 import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { installInteractive } from './interactive.js'
+import { combineAutocomplete, createFileIndex, createMentionAutocomplete } from './mentions.js'
+import { createPrefs } from './prefs.js'
+import { collectStartupSections } from './startup-info.js'
+
+const pkg = createRequire(import.meta.url)('../package.json')
 import { createKernel } from './kernel.js'
 import { installDefaultRenderers } from './messages.js'
 import { applySessionEvent, createView } from './projection.js'
@@ -60,6 +68,13 @@ export async function apply(ctx) {
     throw new Error('dsh-tui: ctx.agents is unavailable — the profile must include a bundle that provides the agent registry (e.g. @deepseek-ai/dsh-base)')
   }
 
+  // 偏好持久化：记住上次用的模型。与 harness 状态（~/.dsh/）分开存。
+  const prefs = createPrefs()
+  const saved = prefs.read()
+  // 命令行显式给的 --model 永远优先于记住的。
+  const appliedSavedModel = startup.model === undefined && typeof saved.model === 'string' && saved.model.includes('/')
+  const effectiveStartup = appliedSavedModel ? { ...startup, model: saved.model } : startup
+
   const theme = createTheme()
   const registry = createRegistry()
   const view = createView()
@@ -95,13 +110,32 @@ export async function apply(ctx) {
     kernel = await createKernel({
       ctx,
       view,
-      startup,
+      startup: effectiveStartup,
       onUpdate: () => app?.requestRender(),
       onEvent,
     })
   } catch (error) {
-    disposeDefaultRenderers()
-    throw new Error(`dsh-tui: failed to start the agent session — ${error?.message ?? error}`)
+    // 记住的模型可能已经失效（渠道下线、改名）。这时**忘掉它并重试一次**，
+    // 否则用户会被一个自己都改不掉的偏好锁在门外——启动都起不来，自然也
+    // 跑不了 /model。
+    if (appliedSavedModel) {
+      prefs.write({ model: undefined })
+      try {
+        kernel = await createKernel({
+          ctx,
+          view,
+          startup,
+          onUpdate: () => app?.requestRender(),
+          onEvent,
+        })
+      } catch (retryError) {
+        disposeDefaultRenderers()
+        throw new Error(`dsh-tui: failed to start the agent session — ${retryError?.message ?? retryError}`)
+      }
+    } else {
+      disposeDefaultRenderers()
+      throw new Error(`dsh-tui: failed to start the agent session — ${error?.message ?? error}`)
+    }
   }
 
   // ── 界面 ──────────────────────────────────────────────────────────────
@@ -164,6 +198,36 @@ export async function apply(ctx) {
   // 斜杠命令：本地命令自己处理，其余交给内核的注册表。
   const commandSystem = createCommandSystem({ ctx, getAgent: () => kernel.agent })
 
+  // 补全：命令走 `/`，文件引用走 `@`。
+  const mentionAutocomplete = createMentionAutocomplete({ listFiles: createFileIndex(process.cwd()) })
+
+  /** 自检报告：直接回答「哪些内核服务接上了、哪些没有」。 */
+  function doctorReport() {
+    const mark = (name) => (ctx.get(name) === undefined ? '✗ 缺失' : '✓ 已接')
+    let toolCount
+    try {
+      const list = ctx.get('tools')?.list
+      if (typeof list === 'function') toolCount = list.call(ctx.get('tools')).length
+    } catch {
+      toolCount = undefined
+    }
+    return [
+      `dsh-tui ${pkg.version} 自检`,
+      `  session      ${kernel.sessionId}`,
+      `  model        ${modelLabel === '' ? '(内核默认)' : modelLabel}`,
+      `  cwd          ${process.cwd()}`,
+      `  skills       ${mark('skills')}`,
+      `  commands     ${mark('commands')}`,
+      `  tools        ${toolCount === undefined ? mark('tools') : `✓ ${toolCount} 个`}`,
+      `  tokenMeter   ${mark('tokenMeter')}   ← 底栏用量段`,
+      `  sandboxPolicy ${mark('sandboxPolicy')}   ← 底栏沙箱段`,
+      `  llm          ${mark('llm')}   ← 底栏上下文上限`,
+      `  approval     ${mark('approval')}   ← 授权弹窗`,
+      `  userQuestions ${mark('userQuestions')}   ← 提问弹窗`,
+      `  偏好文件     ${prefs.file}`,
+    ].join('\n')
+  }
+
   /** 执行一行斜杠命令。 */
   async function runCommand(line) {
     const parsed = parseCommandLine(line)
@@ -176,6 +240,29 @@ export async function apply(ctx) {
       }
       if (parsed.name === 'help') {
         app?.notice?.(helpText(commandSystem.listAll()))
+        return
+      }
+      if (parsed.name === 'doctor') {
+        app?.notice?.(doctorReport())
+        return
+      }
+      if (parsed.name === 'model') {
+        if (parsed.rest === '') {
+          const current =
+            kernel.selection === undefined ? '(内核默认)' : `${kernel.selection.provider}/${kernel.selection.model}`
+          app?.notice?.(
+            `当前模型：${current}\n记忆的默认：${prefs.read().model ?? '(无)'}\n用法：/model provider/model`,
+          )
+          return
+        }
+        if (!parsed.rest.includes('/')) {
+          app?.notice?.('/model 需要 provider/model 形式，例如 /model deepseek-official/deepseek-flash')
+          return
+        }
+        const next = prefs.write({ model: parsed.rest })
+        app?.notice?.(
+          `已记住默认模型：${next.model}\n本次会话仍是 ${modelLabel === '' ? '内核默认' : modelLabel}（切换模型需要重开会话）`,
+        )
         return
       }
       return
@@ -209,6 +296,8 @@ export async function apply(ctx) {
         void runCommand(line)
       },
       listCommands: () => commandSystem.listAll(),
+      combineProviders: () =>
+        combineAutocomplete([createCommandAutocomplete({ list: () => commandSystem.listAll() }), mentionAutocomplete]),
       onInterrupt: () => {
         kernel.interrupt()
       },
@@ -230,6 +319,14 @@ export async function apply(ctx) {
   // 模型上下文窗口只能异步解析，预热一次即可；失败就永远不显示上限那半截。
   void footerInfo.warmUp()
 
+  // 顶部 banner 走注册表（可被 setHeader 整体换掉），配色取自本 TUI 的主题。
+  registry.setHeader(
+    createBanner({
+      theme,
+      getSubtitle: () => `dsh-tui ${pkg.version} · ${modelLabel === '' ? 'default model' : modelLabel}`,
+    }),
+  )
+
   try {
     app.start()
   } catch (error) {
@@ -249,6 +346,21 @@ export async function apply(ctx) {
   if (typeof startup.prompt === 'string' && startup.prompt.trim() !== '') {
     kernel.submit(startup.prompt)
   }
+
+  // 启动信息块：照 pi 的做法，开机把「我加载了什么」写进对话区，随对话自然
+  // 滚进终端 scrollback。异步收集，失败就整块不出现——绝不阻塞启动。
+  void collectStartupSections({
+    ctx,
+    listCommands: () => commandSystem.listAll(),
+    theme,
+    version: pkg.version,
+  })
+    .then((sections) => {
+      if (sections.length > 0) app?.pushRow?.({ role: 'info', sections })
+    })
+    .catch(() => {
+      // 信息块只是开机问候，收集失败不该影响任何东西。
+    })
 
   // ── 生命周期 ──────────────────────────────────────────────────────────
   //

@@ -20,7 +20,6 @@
  */
 
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
-import { createCommandAutocomplete } from './commands.js'
 import { DefaultFooter } from './footer.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
@@ -188,7 +187,7 @@ class WorkingLine {
  * @param {()=>({turnActive:boolean,statusText?:string})} options.getState
  */
 export function createApp(options) {
-  const { view, theme, registry, onSubmit, onCommand, listCommands, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
+  const { view, theme, registry, onSubmit, onCommand, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
 
   const terminal = new ProcessTerminal()
   const tui = new TUI(terminal)
@@ -233,12 +232,13 @@ export function createApp(options) {
       else onSubmit(trimmed)
     }
 
-    // 命令补全：只在行首是 `/` 且未输入空格时触发（命令自己的参数语法不该被接管）。
-    if (typeof component.setAutocompleteProvider === 'function' && typeof listCommands === 'function') {
+    // 补全：命令走行首 `/`，文件引用走 `@`。pi-tui 的 Editor 只接受一个
+    // provider，所以在这里合流。
+    if (typeof component.setAutocompleteProvider === 'function' && options.combineProviders !== undefined) {
       try {
-        component.setAutocompleteProvider(createCommandAutocomplete({ list: listCommands }))
+        component.setAutocompleteProvider(options.combineProviders())
       } catch {
-        // 补全装不上不影响命令本身可用。
+        // 补全装不上不影响正常输入。
       }
     }
 
@@ -348,12 +348,20 @@ export function createApp(options) {
       editor?.setText?.(text)
       tui.requestRender()
     },
+    /** 往对话区插一行本地内容（不进 session）。 */
+    pushRow: (row) => {
+      if (disposed) return
+      view.rows.push({ rev: 0, done: true, key: `local-${view.rows.length + 1}`, ...row })
+      // 与 projection.js 的 touch() 保持一致：任何结构变化都要推进 revision，
+      // 否则组件的 (width, revision) 缓存会拿到陈旧的一帧。
+      view.revision += 1
+      chat.invalidate()
+      tui.requestRender()
+    },
     /** 往对话区插一条本地提示（不进 session）。 */
     notice: (text) => {
       if (disposed) return
       view.rows.push({ key: `notice-${view.rows.length + 1}`, role: 'notice', text, done: true })
-      // 与 projection.js 的 touch() 保持一致：任何结构变化都要推进 revision，
-      // 否则组件的 (width, revision) 缓存会拿到陈旧的一帧。
       view.revision += 1
       chat.invalidate()
       tui.requestRender()

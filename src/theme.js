@@ -13,6 +13,8 @@
  * 本身不认识 token 名。我们先定义自己的一组，覆盖 pi-tui 实际会用到的地方。
  */
 
+import { createHighlighter } from './highlight.js'
+
 // ── ANSI 生成 ────────────────────────────────────────────────────────────
 
 const RESET = '\x1b[0m'
@@ -168,8 +170,15 @@ export function createTheme(tokens = DARK_TOKENS, env = process.env) {
     italic: (t) => italic(t),
     strikethrough: (t) => strikethrough(t),
     underline: (t) => underline(t),
-    // 语法高亮留空：pi-tui 会退回 codeBlock 的纯色渲染。
-    // 以后要接 highlight.js 就在这里补 highlightCode。
+    // 语法高亮：只认有把握的语言（注释/字符串/数字/关键字），其余返回
+    // undefined，pi-tui 会退回 codeBlock 的纯色渲染。
+    highlightCode: createHighlighter({
+      code: (t) => fg('toolOutput', t),
+      comment: (t) => fg('dim', t),
+      string: (t) => fg('success', t),
+      number: (t) => fg('warning', t),
+      keyword: (t) => fg('accent', t),
+    }),
   }
 
   const editor = {

@@ -11,6 +11,7 @@
  */
 
 import { Box, Container, Markdown, Text } from '@earendil-works/pi-tui'
+import { infoRenderer } from './startup-info.js'
 import { ToolCard } from './tool-cards.js'
 
 // ── 各角色默认渲染器 ─────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ export function installDefaultRenderers(registry) {
     registry.setMessageRenderer('tool', toolRenderer),
     registry.setMessageRenderer('notice', noticeRenderer),
     registry.setMessageRenderer('warn', warnRenderer),
+    registry.setMessageRenderer('info', infoRenderer),
     // 兜底：未知角色按提示行渲染，永不崩。
     registry.setMessageRenderer('*', noticeRenderer),
   ]
