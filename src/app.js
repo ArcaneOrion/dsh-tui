@@ -20,6 +20,7 @@
  */
 
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { createCommandAutocomplete } from './commands.js'
 import { DefaultFooter } from './footer.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
@@ -187,7 +188,7 @@ class WorkingLine {
  * @param {()=>({turnActive:boolean,statusText?:string})} options.getState
  */
 export function createApp(options) {
-  const { view, theme, registry, onSubmit, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
+  const { view, theme, registry, onSubmit, onCommand, listCommands, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
 
   const terminal = new ProcessTerminal()
   const tui = new TUI(terminal)
@@ -219,14 +220,28 @@ export function createApp(options) {
     const factory = registry.editorFactory
     const component =
       typeof factory === 'function' ? factory(tui, theme, registry) : new Editor(tui, theme.editor)
-    if (component !== undefined && component !== null) {
-      component.onSubmit = (text) => {
-        const trimmed = String(text ?? '').trim()
-        if (trimmed === '') return
-        component.setText('')
-        onSubmit(trimmed)
+    if (component === undefined || component === null) return component
+
+    component.onSubmit = (text) => {
+      const trimmed = String(text ?? '').trim()
+      if (trimmed === '') return
+      component.setText('')
+      // pi-tui 的 Editor 自带历史；显式记一笔，翻上下键能找回刚发的内容。
+      component.addToHistory?.(trimmed)
+      // 斜杠行走命令通道，**绝不**当作消息发给模型。
+      if (trimmed.startsWith('/')) onCommand?.(trimmed)
+      else onSubmit(trimmed)
+    }
+
+    // 命令补全：只在行首是 `/` 且未输入空格时触发（命令自己的参数语法不该被接管）。
+    if (typeof component.setAutocompleteProvider === 'function' && typeof listCommands === 'function') {
+      try {
+        component.setAutocompleteProvider(createCommandAutocomplete({ list: listCommands }))
+      } catch {
+        // 补全装不上不影响命令本身可用。
       }
     }
+
     return component
   }
 

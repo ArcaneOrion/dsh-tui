@@ -13,6 +13,7 @@
  */
 
 import { createApp } from './app.js'
+import { createCommandSystem, helpText, parseCommandLine } from './commands.js'
 import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { installInteractive } from './interactive.js'
@@ -160,6 +161,40 @@ export async function apply(ctx) {
     getSelection: () => kernel.selection,
   })
 
+  // 斜杠命令：本地命令自己处理，其余交给内核的注册表。
+  const commandSystem = createCommandSystem({ ctx, getAgent: () => kernel.agent })
+
+  /** 执行一行斜杠命令。 */
+  async function runCommand(line) {
+    const parsed = parseCommandLine(line)
+    if (parsed === undefined) return
+
+    if (commandSystem.isLocal(parsed.name)) {
+      if (parsed.name === 'exit' || parsed.name === 'quit') {
+        void shutdown(0)
+        return
+      }
+      if (parsed.name === 'help') {
+        app?.notice?.(helpText(commandSystem.listAll()))
+        return
+      }
+      return
+    }
+
+    // 内核命令：注册表与执行都归它，TUI 只把行发过去、把结果画出来。
+    app?.notice?.(`/${parsed.name}`)
+    try {
+      const result = await commandSystem.executeKernel(line)
+      if (result === undefined) {
+        app?.notice?.(`未知命令：/${parsed.name}（用 /help 看可用命令）`)
+        return
+      }
+      if (result.text !== '') app?.notice?.(result.text)
+    } catch (error) {
+      app?.notice?.(`命令失败：${error?.message ?? error}`)
+    }
+  }
+
   // createApp 会构造真实的终端对象（ProcessTerminal / Editor），这一步可能抛。
   // 抛了就必须把已经建起来的 agent 与监听全部回收，否则每失败一次泄漏一个会话。
   try {
@@ -170,6 +205,10 @@ export async function apply(ctx) {
       onSubmit: (text) => {
         kernel.submit(text)
       },
+      onCommand: (line) => {
+        void runCommand(line)
+      },
+      listCommands: () => commandSystem.listAll(),
       onInterrupt: () => {
         kernel.interrupt()
       },
