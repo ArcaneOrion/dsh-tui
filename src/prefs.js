@@ -54,15 +54,29 @@ export function createPrefs({ dir = defaultConfigDir() } = {}) {
     }
   }
 
+  /**
+   * 写入偏好。
+   *
+   * @returns {{ok:boolean, value:object}} `ok` 如实反映**是否真的落盘**。
+   *   早期版本无论成败都返回新值，调用方于是告诉用户「已记住」——那是假成功。
+   */
   function write(patch) {
     const next = sanitize({ ...read(), ...patch })
+    let ok = false
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
       fs.writeFileSync(file, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
+      // mode 只在**新建**时生效；已存在的文件不会被收紧，显式改一次。
+      try {
+        fs.chmodSync(file, 0o600)
+      } catch {
+        // 平台不支持 chmod（Windows）不算失败。
+      }
+      ok = true
     } catch {
-      // 写不进去就算了——偏好记不住不该影响这一次会话。
+      ok = false
     }
-    return next
+    return { ok, value: next }
   }
 
   return { file, read, write }

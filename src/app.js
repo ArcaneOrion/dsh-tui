@@ -249,9 +249,9 @@ export function createApp(options) {
     editorSlot.clear()
     editor = buildEditor()
     editorSlot.addChild(editor)
-    // 焦点必须跟着新编辑器走，否则替换之后用户打不了字。
+    // 焦点跟着新编辑器走；但**有弹窗时不能抢**，否则模态框会失灵。
     try {
-      tui.setFocus(editor)
+      if (tui.hasOverlay?.() !== true) tui.setFocus(editor)
     } catch {
       // start() 之前 setFocus 可能不可用；start 之后会再设一次。
     }
@@ -277,17 +277,61 @@ export function createApp(options) {
     ticker.unref?.()
   }
 
-  // 一切界面变更都通过 registry 通知；订阅后重建受影响的部分。
+  // ── 变更响应 ────────────────────────────────────────────────────────────
+  //
+  // 关键：**只在实现点的引用真的变了时才重建**。
+  //
+  // 早期版本无条件 `rebuildEditor()`。后果很严重：`setStatus` / `setWidget`
+  // 是对外开放的常规接口，一个按 token 刷新状态片段的插件会让订阅回调每帧
+  // 触发一次，于是用户正在打的内容、光标位置、编辑历史被反复清空，而且
+  // `setFocus` 会把焦点从打开的弹窗上抢走。
+  //
+  // 重建是「换实现」的动作，不是「界面变了」的动作——这两件事必须分开。
+  let lastHeader
+  let lastFooter
+  let lastEditorFactory
+  let lastIndicatorKey
+  let lastWidgetKeys = ''
+
+  function widgetKey(list) {
+    return list.map((w) => `${w.order}:${Array.isArray(w.component) ? w.component.join('\u0000') : 'c'}`).join('|')
+  }
+
   const unsubscribe = registry.subscribe(() => {
     if (disposed) return
-    headerSlot.clear()
+
     const header = registry.header
-    if (header !== undefined && header !== null) headerSlot.addChild(header)
-    rebuildWidgets(aboveWidgets, registry.widgetList(WidgetPlacement.ABOVE_EDITOR))
-    rebuildWidgets(belowWidgets, registry.widgetList(WidgetPlacement.BELOW_EDITOR))
-    rebuildEditor()
-    rebuildFooter()
-    restartTicker()
+    if (header !== lastHeader) {
+      lastHeader = header
+      headerSlot.clear()
+      if (header !== undefined && header !== null) headerSlot.addChild(header)
+    }
+
+    const headWidgets = registry.widgetList(WidgetPlacement.ABOVE_EDITOR)
+    const footWidgets = registry.widgetList(WidgetPlacement.BELOW_EDITOR)
+    const widgetKeys = widgetKey(headWidgets) + '#' + widgetKey(footWidgets)
+    if (widgetKeys !== lastWidgetKeys) {
+      lastWidgetKeys = widgetKeys
+      rebuildWidgets(aboveWidgets, headWidgets)
+      rebuildWidgets(belowWidgets, footWidgets)
+    }
+
+    if (registry.editorFactory !== lastEditorFactory) {
+      lastEditorFactory = registry.editorFactory
+      rebuildEditor()
+    }
+
+    if (registry.footer !== lastFooter) {
+      lastFooter = registry.footer
+      rebuildFooter()
+    }
+
+    const indicatorKey = JSON.stringify(registry.workingIndicator ?? null)
+    if (indicatorKey !== lastIndicatorKey) {
+      lastIndicatorKey = indicatorKey
+      restartTicker()
+    }
+
     chat.invalidate()
     working.invalidate()
     tui.requestRender()
@@ -296,6 +340,17 @@ export function createApp(options) {
   rebuildEditor()
   rebuildFooter()
   restartTicker()
+
+  // 记下初始实现的引用，这样后续通知不会把刚建好的东西又重建一遍
+  // （重建 = 丢输入内容 + 抢焦点，代价很高）。
+  lastHeader = registry.header
+  lastFooter = registry.footer
+  lastEditorFactory = registry.editorFactory
+  lastIndicatorKey = JSON.stringify(registry.workingIndicator ?? null)
+  lastWidgetKeys =
+    widgetKey(registry.widgetList(WidgetPlacement.ABOVE_EDITOR)) +
+    '#' +
+    widgetKey(registry.widgetList(WidgetPlacement.BELOW_EDITOR))
 
   root.addChild(headerSlot)
   root.addChild(chat)
@@ -366,10 +421,17 @@ export function createApp(options) {
       chat.invalidate()
       tui.requestRender()
     },
+    /** 一次性结算所有还在等回答的弹窗（退出路径必须先调它）。 */
+    cancelPrompts: () => prompter.cancelAll(),
+    /** 当前在等回答的弹窗数量（诊断用）。 */
+    pendingPrompts: () => prompter.pendingCount(),
     start: () => tui.start(),
     dispose: () => {
       if (disposed) return
       disposed = true
+      // **先**结算所有还等着的弹窗：否则退出路径上 `await kernel.dispose()`
+      // 可能在等一个永远不来的审批回答，shutdown 就走不到 process.exit。
+      prompter.cancelAll()
       if (ticker !== undefined) clearInterval(ticker)
       unsubscribe()
       try {

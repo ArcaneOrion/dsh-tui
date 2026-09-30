@@ -140,11 +140,20 @@ export function createRegistry() {
    */
   function setStatus(key, text, options = {}) {
     if (typeof key !== 'string' || key === '') throw new Error('setStatus: key must be a non-empty string')
-    if (text === undefined) statuses.delete(key)
-    else statuses.set(key, { text: String(text), order: options.order ?? orderCounter++ })
+    // 记住「我装进去的那个值」和「我替换掉的前值」。
+    // disposer 的契约是「还原上一个实现」，但**只有当当前值仍是我装的那个**时
+    // 才还原——否则别人早改过它了，我不该把别人的值抹掉。
+    // （只记前值是不够的：两个使用者共用同一个 key 时，先撤的那个会把后一个
+    //   的值一起清掉。）
+    const previous = statuses.get(key)
+    const installed = text === undefined ? undefined : { text: String(text), order: options.order ?? orderCounter++ }
+    if (installed === undefined) statuses.delete(key)
+    else statuses.set(key, installed)
     bump()
     return () => {
-      statuses.delete(key)
+      if (statuses.get(key) !== installed) return
+      if (previous === undefined) statuses.delete(key)
+      else statuses.set(key, previous)
       bump()
     }
   }
@@ -158,11 +167,16 @@ export function createRegistry() {
   function setWidget(key, component, options = {}) {
     if (typeof key !== 'string' || key === '') throw new Error('setWidget: key must be a non-empty string')
     const placement = options.placement ?? WidgetPlacement.ABOVE_EDITOR
-    if (component === undefined) widgets.delete(key)
-    else widgets.set(key, { component, placement, order: options.order ?? orderCounter++ })
+    const previous = widgets.get(key)
+    const installed =
+      component === undefined ? undefined : { component, placement, order: options.order ?? orderCounter++ }
+    if (installed === undefined) widgets.delete(key)
+    else widgets.set(key, installed)
     bump()
     return () => {
-      widgets.delete(key)
+      if (widgets.get(key) !== installed) return
+      if (previous === undefined) widgets.delete(key)
+      else widgets.set(key, previous)
       bump()
     }
   }

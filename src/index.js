@@ -155,6 +155,14 @@ export async function apply(ctx) {
     } catch {
       // 卸载失败不能阻止退出。
     }
+    // **在 flush 之前**结算还等着的弹窗。否则 `await kernel.flush()` /
+    // `await kernel.dispose()` 可能在等一个永远不来的审批回答，
+    // shutdown 就永远走不到 process.exit。
+    try {
+      app?.cancelPrompts?.()
+    } catch {
+      // 结算失败也要继续往下走。
+    }
     if (flush) {
       try {
         await kernel.flush()
@@ -259,9 +267,11 @@ export async function apply(ctx) {
           app?.notice?.('/model 需要 provider/model 形式，例如 /model deepseek-official/deepseek-flash')
           return
         }
-        const next = prefs.write({ model: parsed.rest })
+        const result = prefs.write({ model: parsed.rest })
         app?.notice?.(
-          `已记住默认模型：${next.model}\n本次会话仍是 ${modelLabel === '' ? '内核默认' : modelLabel}（切换模型需要重开会话）`,
+          result.ok
+            ? `已记住默认模型：${result.value.model}\n本次会话仍是 ${modelLabel === '' ? '内核默认' : modelLabel}（切换模型需要重开会话）`
+            : `无法写入偏好文件（${prefs.file}）——本次设置**没有保存**`,
         )
         return
       }

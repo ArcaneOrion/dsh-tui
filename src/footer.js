@@ -205,9 +205,12 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
           : `${selection.provider}/${selection.model}`
 
       const used = measureTokens()
+      // 用 path.basename 而不是 split('/')：后者在 Windows 上会把整个路径
+      // 当文件名显示出来。
+      const base = path.basename(cwd)
       return {
         model,
-        dir: cwd.split('/').filter(Boolean).pop(),
+        dir: base === '' ? cwd : base,
         branch: readGitBranch(cwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: contextLimit },
         sandbox: shortSandboxMode(sandboxMode()),

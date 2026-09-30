@@ -81,18 +81,48 @@ export function scanFiles(root) {
 
 /**
  * 造一个带 TTL 缓存的取文件列表函数。
+ *
+ * **绝不在按键路径上同步扫盘。** 补全是在每次按键时被调用的，而扫描是
+ * `readdirSync` 递归——大仓库上会阻塞事件循环，spinner 停摆、按键排队，
+ * 表现为「打字一顿一顿的」。
+ *
+ * 所以：第一次在创建时**预热**（此时界面还没开始接收按键），之后 `listFiles()`
+ * 只返回缓存；TTL 过期时**安排一次后台重扫**并先把旧列表给出去。补全结果
+ * 最多旧几秒，但打字永远不会被卡住。
+ *
  * @param {string} root
- * @param {{ttlMs?:number}} [options]
+ * @param {{ttlMs?:number, warm?:boolean}} [options]
  */
-export function createFileIndex(root, { ttlMs = CACHE_TTL_MS } = {}) {
+export function createFileIndex(root, { ttlMs = CACHE_TTL_MS, warm = true } = {}) {
   let cache
   let cachedAt = 0
+  let refreshing = false
+
+  function refresh() {
+    refreshing = true
+    try {
+      cache = scanFiles(root)
+      cachedAt = Date.now()
+    } catch {
+      // 扫不动就保留旧列表。
+    } finally {
+      refreshing = false
+    }
+  }
+
+  if (warm) refresh()
 
   return function listFiles() {
-    const now = Date.now()
-    if (cache !== undefined && now - cachedAt < ttlMs) return cache
-    cache = scanFiles(root)
-    cachedAt = now
+    if (cache === undefined) {
+      // 冷缓存（warm:false 或首次扫描失败）：这一次不得不同步扫。
+      refresh()
+      return cache ?? []
+    }
+    if (!refreshing && Date.now() - cachedAt >= ttlMs) {
+      // 把重扫推到当前按键处理之后，不阻塞它。
+      const timer = setTimeout(refresh, 0)
+      timer.unref?.()
+    }
     return cache
   }
 }

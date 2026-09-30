@@ -81,3 +81,36 @@ test('未知字段不会被写回文件（避免文件被越写越脏）', () =>
   const raw = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'))
   assert.deepEqual(Object.keys(raw).sort(), ['model', 'provider'])
 })
+
+// ── 写失败必须如实上报（否则界面会报假成功）────────────────────────────
+
+test('write 返回 ok:true 表示真的落盘了', () => {
+  const prefs = createPrefs({ dir: tempDir() })
+  const result = prefs.write({ model: 'a/b' })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.model, 'a/b')
+})
+
+test('write 在路径不可写时返回 ok:false，而不是假装成功', () => {
+  const dir = tempDir()
+  // 在「目录」该在的位置放一个**文件**，mkdirSync 必然失败。
+  const blocker = path.join(dir, 'blocker')
+  fs.writeFileSync(blocker, 'not a directory')
+  const prefs = createPrefs({ dir: path.join(blocker, 'config') })
+
+  const result = prefs.write({ model: 'a/b' })
+  assert.equal(result.ok, false, '写不进去就必须说写不进去')
+  assert.equal(fs.existsSync(prefs.file), false)
+})
+
+test('写成功时文件权限被收紧到 0600（含已存在的文件）', () => {
+  const dir = tempDir()
+  const prefs = createPrefs({ dir })
+  const file = path.join(dir, 'config.json')
+  fs.writeFileSync(file, '{}')
+  fs.chmodSync(file, 0o644)
+  prefs.write({ model: 'a/b' })
+  const mode = fs.statSync(file).mode & 0o777
+  // Windows 上 chmod 不生效，跳过断言。
+  if (process.platform !== 'win32') assert.equal(mode, 0o600, `权限应为 0600，实际 ${mode.toString(8)}`)
+})

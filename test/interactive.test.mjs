@@ -255,6 +255,77 @@ test('提问：请求已取消时不弹窗', async () => {
   assert.equal(calls.askText, 0)
 })
 
+// ── P0 回归：取消时必须撤掉已弹出的框 ───────────────────────────────────
+
+test('【P0 回归】审批请求被取消时，已弹出的框必须被撤掉', async () => {
+  // 否则它会变成僵尸模态框：继续吃按键，而回合已经结束，Esc 被应用级监听
+  // 当成「中断回合」消费掉，用户根本关不掉它。
+  const { ctx, handlers } = makeCtx()
+  const controller = new AbortController()
+  let cancelCalls = 0
+  const app = {
+    choose: () => new Promise(() => {}), // 永不 settle：模拟用户还没选
+    askText: async () => undefined,
+    notice: () => {},
+    cancelPrompts: () => {
+      cancelCalls += 1
+    },
+  }
+  installInteractive({ ctx, app })
+
+  const pending = handlers.get('approval/request')(
+    { toolName: 'bash', signal: controller.signal },
+    nextReturning('unavailable'),
+  )
+  controller.abort()
+  assert.equal(await pending, 'cancelled')
+  assert.equal(cancelCalls, 1, '必须主动撤框')
+})
+
+test('【P0 回归】提问请求被取消时，已弹出的框也必须被撤掉', async () => {
+  const { ctx, handlers } = makeCtx()
+  const controller = new AbortController()
+  let cancelCalls = 0
+  const app = {
+    choose: () => new Promise(() => {}),
+    askText: async () => undefined,
+    notice: () => {},
+    cancelPrompts: () => {
+      cancelCalls += 1
+    },
+  }
+  installInteractive({ ctx, app })
+
+  const pending = handlers.get('user-questions/request')(
+    { questions: [{ id: 'q1', question: '?', options: [{ label: 'A' }] }], signal: controller.signal },
+    nextReturning({ answers: [] }),
+  )
+  controller.abort()
+  await pending
+  assert.equal(cancelCalls, 1)
+})
+
+test('审批信号取消时，撤框失败也不能让内核继续等', async () => {
+  const { ctx, handlers } = makeCtx()
+  const controller = new AbortController()
+  const app = {
+    choose: () => new Promise(() => {}),
+    askText: async () => undefined,
+    notice: () => {},
+    cancelPrompts: () => {
+      throw new Error('撤框失败')
+    },
+  }
+  installInteractive({ ctx, app })
+
+  const pending = handlers.get('approval/request')(
+    { toolName: 'bash', signal: controller.signal },
+    nextReturning('unavailable'),
+  )
+  controller.abort()
+  assert.equal(await pending, 'cancelled')
+})
+
 // ── 卸载 ─────────────────────────────────────────────────────────────────
 
 test('卸载后两个 waterfall 都不再被认领', () => {

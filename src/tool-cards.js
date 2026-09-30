@@ -44,12 +44,13 @@ export function lineDiff(oldText, newText) {
   // 全新建文件：没有前像，直接全标成新增。
   if (n === 0) return after.map((text) => ({ kind: 'add', text }))
 
-  // LCS 表。hunk 很小，O(n*m) 可接受；上限保护避免病态输入卡住界面。
+  // 改动过大时**不猜**。
+  //
+  // 早期版本在这里把整份前后文标成「全删 + 全增」，再被行数上限截掉——用户
+  // 会看到「前 40 行被删」，而实际只改了一行。那是伪造，正面违反本模块
+  // 「宁可朴素，不可编造」的原则。改成一行如实说明。
   if (n * m > 250_000) {
-    return [
-      ...before.map((text) => ({ kind: 'remove', text })),
-      ...after.map((text) => ({ kind: 'add', text })),
-    ]
+    return [{ kind: 'summary', text: `${n} 行 → ${m} 行（改动过大，未逐行展开）` }]
   }
 
   const table = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
@@ -91,21 +92,28 @@ export function clampLines(text, maxLines) {
  * 渲染一组文件 diff。
  * @returns {string[]} 已配色、未截宽的行
  */
-export function renderDiffs(diffs, theme, { maxLinesPerFile = 40 } = {}) {
+export function renderDiffs(diffs, theme, { maxLinesPerFile = 40, maxTotalLines = 120 } = {}) {
   const out = []
   for (const file of diffs) {
+    if (out.length >= maxTotalLines) break
     out.push(theme.fg('muted', '  ' + String(file.path ?? '')))
     const rows = lineDiff(file.oldText ?? null, file.newText ?? '')
-    const shown = rows.slice(0, maxLinesPerFile)
+    const budget = Math.min(maxLinesPerFile, Math.max(0, maxTotalLines - out.length))
+    const shown = rows.slice(0, budget)
     for (const row of shown) {
+      if (row.kind === 'summary') {
+        out.push(theme.fg('dim', '  ' + row.text))
+        continue
+      }
       const marker = row.kind === 'add' ? '+' : row.kind === 'remove' ? '-' : ' '
       const tone = row.kind === 'add' ? 'diffAdded' : row.kind === 'remove' ? 'diffRemoved' : 'diffContext'
       out.push(theme.fg(tone, '  ' + marker + ' ' + row.text))
     }
-    if (rows.length > shown.length) {
+    if (rows.length > shown.length && shown[shown.length - 1]?.kind !== 'summary') {
       out.push(theme.fg('dim', `  … 另有 ${rows.length - shown.length} 行`))
     }
   }
+  if (out.length >= maxTotalLines) out.push(theme.fg('dim', '  … 更多改动已省略'))
   return out
 }
 
@@ -187,9 +195,13 @@ export function renderResultView(view, fallbackText, theme, options = {}) {
     if (view.card === 'search') {
       if (view.shape === 'matches' && Array.isArray(view.files)) {
         for (const file of view.files) {
-          out.push(theme.fg('muted', '  ' + String(file.path ?? '')))
-          for (const match of file.matches ?? []) {
-            out.push(theme.fg('toolOutput', `    ${match.lineNumber}: ${match.line}`))
+          out.push(theme.fg('muted', '  ' + String(file?.path ?? '')))
+          for (const match of file?.matches ?? []) {
+            // 字段可能来自被改坏/被截断的 meta；缺了给个诚实的 `?`，
+            // 而不是把 undefined 打到屏幕上。
+            const lineNumber = Number.isFinite(match?.lineNumber) ? match.lineNumber : '?'
+            const text = typeof match?.line === 'string' ? match.line : ''
+            out.push(theme.fg('toolOutput', `    ${lineNumber}: ${text}`))
           }
         }
         if (view.truncated === true) out.push(theme.fg('warning', `  … 命中 ${view.total} 处，已截断`))
@@ -209,8 +221,9 @@ export function renderResultView(view, fallbackText, theme, options = {}) {
         out.push(theme.fg('muted', '  ' + view.path) + suffix)
       }
       for (const line of view.lines.slice(0, maxLines)) {
-        const number = String(line.number).padStart(4)
-        out.push(theme.fg('dim', '  ' + number + ' ') + theme.fg('toolOutput', String(line.text)))
+        const number = Number.isFinite(line?.number) ? String(line.number).padStart(4) : '   ?'
+        const text = typeof line?.text === 'string' ? line.text : ''
+        out.push(theme.fg('dim', '  ' + number + ' ') + theme.fg('toolOutput', text))
       }
       if (view.lines.length > maxLines) out.push(theme.fg('dim', `  … 另有 ${view.lines.length - maxLines} 行`))
       return out
@@ -231,7 +244,9 @@ export function renderResultView(view, fallbackText, theme, options = {}) {
         return out
       }
       if (view.kind === 'fetch') {
-        out.push(theme.fg('toolOutput', `  ${view.statusCode} ${view.url}`))
+        const status = Number.isFinite(view.statusCode) ? view.statusCode : '?'
+        const url = typeof view.url === 'string' ? view.url : ''
+        out.push(theme.fg('toolOutput', `  ${status} ${url}`.trimEnd()))
         if (view.truncated === true) out.push(theme.fg('warning', '  … 正文已截断'))
         return out
       }

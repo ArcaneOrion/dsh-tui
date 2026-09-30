@@ -124,3 +124,51 @@ test('revision 单调递增，可作为组件缓存键', () => {
   registry.setStatus('k', 'v')
   assert.ok(registry.revision > before)
 })
+
+// ── disposer 必须「还原上一个」而不是「直接删掉」────────────────────────
+
+test('setStatus：后注册者撤销时，前一个的值要回来', () => {
+  const registry = createRegistry()
+  registry.setStatus('shared', '第一个')
+  const undoSecond = registry.setStatus('shared', '第二个')
+  assert.deepEqual(registry.statusTexts(), ['第二个'])
+  undoSecond()
+  assert.deepEqual(registry.statusTexts(), ['第一个'], '撤销应还原前一个实现，而不是清空')
+})
+
+test('setStatus：乱序撤销时，先撤的那个不得抹掉后一个的值', () => {
+  // 这是 CAS 修复要保证的性质：只有当当前值仍是我装的那个时才还原。
+  const registry = createRegistry()
+  const undoFirst = registry.setStatus('shared', '第一个')
+  const undoSecond = registry.setStatus('shared', '第二个')
+  undoFirst() // 乱序：先撤第一个
+  assert.deepEqual(registry.statusTexts(), ['第二个'], '先撤的那个不该把后一个的值抹掉')
+  assert.equal(typeof undoSecond, 'function')
+})
+
+test('setWidget：后注册者撤销时，前一个的值要回来', () => {
+  const registry = createRegistry()
+  registry.setWidget('shared', ['A'])
+  const undoSecond = registry.setWidget('shared', ['B'])
+  assert.deepEqual(
+    registry.widgetList(WidgetPlacement.ABOVE_EDITOR).map((w) => w.component),
+    [['B']],
+  )
+  undoSecond()
+  assert.deepEqual(
+    registry.widgetList(WidgetPlacement.ABOVE_EDITOR).map((w) => w.component),
+    [['A']],
+    '撤销应还原前一个挂件',
+  )
+})
+
+test('setWidget：乱序撤销时不得抹掉后一个的值', () => {
+  const registry = createRegistry()
+  const undoFirst = registry.setWidget('shared', ['A'])
+  registry.setWidget('shared', ['B'])
+  undoFirst()
+  assert.deepEqual(
+    registry.widgetList(WidgetPlacement.ABOVE_EDITOR).map((w) => w.component),
+    [['B']],
+  )
+})

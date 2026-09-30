@@ -22,13 +22,18 @@ import { MessageRole } from './registry.js'
  * 判断取消之前就执行，于是请求明明已经被取消，弹窗还是照弹。这个坑是实测
  * 踩出来的（测试里断言「已取消时不弹窗」直接红）。
  *
+ * 取消时不仅要给内核一个 fallback 值，还**必须把已经弹出来的框撤掉**——
+ * 否则那个框会变成僵尸模态框：它继续吃按键，而回合已经结束，Esc 被应用级
+ * 监听当成「中断回合」消费掉，用户根本关不掉它。
+ *
  * @template T
  * @param {() => Promise<T>} start - 真正开始等待用户回答
  * @param {AbortSignal|undefined} signal
  * @param {T} fallback - 被取消时的返回值
+ * @param {() => void} [cancelPrompt] - 撤掉已弹出的框
  * @returns {Promise<T>}
  */
-function withAbort(start, signal, fallback) {
+function withAbort(start, signal, fallback, cancelPrompt) {
   if (signal === undefined || signal === null) return Promise.resolve(start())
   if (signal.aborted === true) return Promise.resolve(fallback)
 
@@ -37,6 +42,11 @@ function withAbort(start, signal, fallback) {
     const onAbort = () => {
       if (settled) return
       settled = true
+      try {
+        cancelPrompt?.()
+      } catch {
+        // 撤框失败也要把内核放走，不能让它继续等。
+      }
       resolve(fallback)
     }
     signal.addEventListener('abort', onAbort, { once: true })
@@ -137,6 +147,8 @@ export function installInteractive({ ctx, app, isAvailable = () => true }) {
             }),
           request?.signal,
           'cancelled',
+          // 撤掉已经弹出来的框，否则它会变成吃按键的僵尸模态框。
+          () => app.cancelPrompts?.(),
         )
       } catch {
         // 弹不出来就交回链上，按内核自己的策略（通常是 unavailable）处理。
@@ -165,7 +177,12 @@ export function installInteractive({ ctx, app, isAvailable = () => true }) {
       for (const question of questions) {
         let answer
         try {
-          answer = await withAbort(() => askOne(app, question), request?.signal, undefined)
+          answer = await withAbort(
+            () => askOne(app, question),
+            request?.signal,
+            undefined,
+            () => app.cancelPrompts?.(),
+          )
         } catch {
           return next()
         }

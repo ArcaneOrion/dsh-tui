@@ -14,7 +14,7 @@ import { test } from 'node:test'
 import { visibleWidth } from '@earendil-works/pi-tui'
 
 import { createTheme } from '../src/theme.js'
-import { clampLines, lineDiff, renderCallView, renderResultView, ToolCard } from '../src/tool-cards.js'
+import { clampLines, lineDiff, renderCallView, renderDiffs, renderResultView, ToolCard } from '../src/tool-cards.js'
 
 const theme = createTheme(undefined, { COLORTERM: 'truecolor' })
 const plain = (lines) => lines.join('\n')
@@ -61,11 +61,33 @@ test('lineDiff：内容相同则全是 context', () => {
   assert.ok(rows.every((r) => r.kind === 'context'))
 })
 
-test('lineDiff：超大输入走退化路径而不是卡住界面', () => {
+test('lineDiff：超大输入给出摘要行，**不伪造**全删全增', () => {
+  // 早期版本在这里把整份前后文标成「全删 + 全增」，再被行数上限截掉——
+  // 用户会看到「前 40 行被删」，而实际只改了一行。那是编造。
   const big = Array.from({ length: 600 }, (_, i) => `line${i}`).join('\n')
   const rows = lineDiff(big, big + '\n尾巴')
-  assert.ok(rows.length > 0)
-  assert.ok(rows.some((r) => r.kind === 'add' && r.text === '尾巴'))
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].kind, 'summary')
+  assert.match(rows[0].text, /600 行 → 601 行/)
+  assert.ok(!rows.some((r) => r.kind === 'remove'), '不得伪造删除行')
+})
+
+test('renderDiffs：摘要行照原样渲染，不加 +/- 标记', () => {
+  const out = renderDiffs([{ path: 'big.ts', oldText: 'a\n'.repeat(600), newText: 'b\n'.repeat(600) }], theme)
+  const text = out.join('\n')
+  assert.match(text, /改动过大/)
+  assert.match(text, /big\.ts/)
+  assert.ok(!/\+\s*b/.test(text), '不得伪造新增行')
+})
+
+test('renderDiffs：多文件合计也有行数上限', () => {
+  const diffs = Array.from({ length: 20 }, (_, i) => ({
+    path: `f${i}.ts`,
+    oldText: 'a',
+    newText: 'b',
+  }))
+  const out = renderDiffs(diffs, theme, { maxLinesPerFile: 40, maxTotalLines: 12 })
+  assert.ok(out.length <= 14, `总行数应受限，实际 ${out.length}`)
 })
 
 // ── 截断 ─────────────────────────────────────────────────────────────────
