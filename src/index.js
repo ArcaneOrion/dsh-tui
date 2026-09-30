@@ -186,7 +186,24 @@ export async function apply(ctx) {
   async function shutdown(code = 0) {
     if (exiting) return
     exiting = true
+
+    // **硬超时兜底。** flush / dispose 任何一个卡住（内核侧还在等、存储慢、
+    // 有未结算的审批），用户就会被困在一个退不出去的 TUI 里，只能强杀进程。
+    // 实机上表现为终端提示符出现 `INT` 标记。清理是尽力而为，退出必须可达。
+    const forceExit = setTimeout(() => {
+      process.stderr.write('dsh-tui: 退出清理超时，强制退出。\n')
+      try {
+        app?.dispose()
+      } catch {
+        // 已经尽力了。
+      }
+      process.exit(code)
+    }, 3000)
+    forceExit.unref?.()
+
     await teardown({ flush: true })
+    clearTimeout(forceExit)
+
     const exit = ctx.get('appExit')
     if (typeof exit === 'function') exit(code)
     else process.exit(code)

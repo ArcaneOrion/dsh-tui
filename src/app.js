@@ -364,10 +364,38 @@ export function createApp(options) {
   tui.setFocus(editor)
 
   // 输入监听：拦截应用级按键。
+  //
+  // **Ctrl+C 必须永远退得出去。** 早期版本是「回合进行中 → 只中断，不退出」，
+  // 于是只要 turnActive 卡在 true（回合状态异常、事件丢失），Ctrl+C 就成了
+  // 死键，用户只能强杀进程——实机表现就是终端里留下一个 `INT` 标记。
+  // 现在按 pi 的做法：双击 Ctrl+C 无条件退出。
+  const DOUBLE_CTRL_C_MS = 1200
+  let lastCtrlC = 0
+
   tui.addInputListener((data) => {
     if (matchesKey(data, Key.ctrl('c'))) {
-      if (getState().turnActive === true) onInterrupt()
-      else onExit()
+      const now = Date.now()
+      const isDouble = now - lastCtrlC < DOUBLE_CTRL_C_MS
+      lastCtrlC = now
+
+      if (isDouble || getState().turnActive !== true) {
+        onExit()
+      } else {
+        // 第一次 Ctrl+C：还在跑就中断。给个回执——否则用户不知道这一下按下去
+        // 到底生效没有，只会觉得按键失灵。
+        onInterrupt()
+        if (!disposed) {
+          view.rows.push({
+            key: `notice-${view.rows.length + 1}`,
+            role: 'notice',
+            text: '已请求中断（再按一次 Ctrl+C 退出）',
+            done: true,
+          })
+          view.revision += 1
+          chat.invalidate()
+          tui.requestRender()
+        }
+      }
       return { consume: true }
     }
     if (matchesKey(data, Key.escape)) {
