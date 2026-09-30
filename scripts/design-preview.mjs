@@ -10,14 +10,16 @@ import { createPrompter } from '../src/prompts.js'
 import { createWorkbench } from '../src/workbench.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const output = path.join(root, 'docs', 'benchmark-v1')
+const baselineFlag = process.argv.indexOf('--baseline')
+const baselineRef = baselineFlag >= 0 ? process.argv[baselineFlag + 1] : 'HEAD'
+const output = path.join(root, 'docs', 'benchmark-v2')
 fs.mkdirSync(output, { recursive: true })
 const baseline = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-ui-baseline-'))
-const baselineCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
-const files = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', 'src', 'package.json'], { cwd: root, encoding: 'utf8' }).trim().split('\n')
+const baselineCommit = execFileSync('git', ['rev-parse', baselineRef], { cwd: root, encoding: 'utf8' }).trim()
+const files = execFileSync('git', ['ls-tree', '-r', '--name-only', baselineCommit, 'src', 'package.json'], { cwd: root, encoding: 'utf8' }).trim().split('\n')
 for (const file of files) {
   fs.mkdirSync(path.dirname(path.join(baseline, file)), { recursive: true })
-  fs.writeFileSync(path.join(baseline, file), execFileSync('git', ['show', `HEAD:${file}`], { cwd: root }))
+  fs.writeFileSync(path.join(baseline, file), execFileSync('git', ['show', `${baselineCommit}:${file}`], { cwd: root }))
 }
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(baseline, 'node_modules'), 'dir')
 
@@ -39,7 +41,7 @@ function setup(api, width = 100, { empty = false } = {}) {
     onSubmit() {}, onCommand() {}, onExit() {}, onInterrupt() {},
   })
   app.tui.requestRender = () => {}
-  registry.setHeader(api.createBanner({ theme, getSubtitle: () => '固定演示 · 相同会话数据', getPreset: () => 'STANDARD' }))
+  registry.setHeader(api.createBanner({ theme, getSubtitle: () => '固定演示 · 相同会话数据', getWorkspace: () => '/workspace/project', getPreset: () => 'STANDARD', hasConversation: () => view.rows.length > 0 }))
   return { app, theme, registry, view }
 }
 
@@ -67,9 +69,9 @@ function workload(api) {
 const before = await modules(baseline), after = await modules(root)
 const scenes = [
   { id: 'before', label: '改版前 · 当前提交基线', width: 100, lines: capture(before, 100) },
-  { id: 'after', label: '第一版 · 对话与工具', width: 100, lines: capture(after, 100) },
-  { id: 'narrow', label: '第一版 · 48 列窄窗口', width: 48, lines: capture(after, 48) },
-  { id: 'welcome', label: '第一版 · 开始工作', width: 100, lines: capture(after, 100, { empty: true }) },
+  { id: 'after', label: '第二版 · 对话与工具', width: 100, lines: capture(after, 100) },
+  { id: 'narrow', label: '第二版 · 48 列窄窗口', width: 48, lines: capture(after, 48) },
+  { id: 'welcome', label: '第二版 · 欢迎页', width: 100, lines: capture(after, 100, { empty: true }) },
 ]
 
 const { app, theme, registry, view } = setup(after)
@@ -78,16 +80,16 @@ const prompts = createPrompter({ theme, tui: { terminal: { rows: 32 }, requestRe
 const runtime = fixtureRuntime()
 const workbench = createWorkbench({ app: { ...app, choose: prompts.choose, document: prompts.document }, kernel: { runtime }, registry, view })
 const opening = workbench.execute('workbench', '')
-scenes.push({ id: 'workbench', label: '第一版 · 工作台', width: 84, lines: panel.render(84) })
+scenes.push({ id: 'workbench', label: '第二版 · 工作台', width: 84, lines: panel.render(84) })
 prompts.cancelAll(); await opening
 const document = prompts.document({ title: '上下文 · 当前快照', text: runtime.context().map((entry) => `${entry.source.kind}\n\n${entry.text}`).join('\n\n────────────────\n\n') })
-scenes.push({ id: 'context', label: '第一版 · 上下文全文', width: 84, lines: panel.render(84) })
+scenes.push({ id: 'context', label: '第二版 · 上下文全文', width: 84, lines: panel.render(84) })
 prompts.cancelAll(); await document
 app.tui.stop = () => {}; app.dispose()
 
-const metrics = { baselineCommit, node: process.version, baseline: workload(before), firstVersion: workload(after),
+const metrics = { baselineCommit, node: process.version, baseline: workload(before), currentVersion: workload(after),
   scenes: scenes.map(({ id, width, lines }) => ({ id, width, renderedLines: lines.length, overflow: lines.filter((line) => visibleWidth(line) > width).length })),
-  note: 'Fixed invented fixtures; no live model calls. Timing is one local sample, not a cross-machine performance score. Baseline is HEAD, excluding pre-existing uncommitted model-routing edits.' }
+  note: 'Fixed invented fixtures; no live model calls. Timing is one local sample, not a cross-machine performance score. Baseline is the recorded Git commit.' }
 fs.writeFileSync(path.join(output, 'metrics.json'), JSON.stringify(metrics, null, 2) + '\n')
 
 const escape = (text) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
@@ -118,12 +120,12 @@ function ansiHtml(input) {
   return html + span(input.slice(cursor))
 }
 for (const scene of scenes) fs.writeFileSync(path.join(output, scene.id + '.ansi'), scene.lines.join('\n') + '\n')
-const gallery = ['after', 'workbench', 'context', 'narrow', 'welcome', 'before'].map((id) => scenes.find((scene) => scene.id === id))
-const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DSH / Fieldnotes — Design 01</title>
+const gallery = ['welcome', 'after', 'narrow', 'workbench', 'context', 'before'].map((id) => scenes.find((scene) => scene.id === id))
+const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepSeek TUI — Design 02</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#101819;color:#e5e5dc;font:15px/1.7 'Sarasa UI SC',sans-serif}main{max-width:1100px;margin:60px auto;padding:0 32px}header{padding:0 0 34px;border-bottom:1px solid #354849}.eyebrow{color:#88c8bc;letter-spacing:.16em;font-size:12px}h1{font-size:44px;line-height:1.2;font-weight:500;letter-spacing:-.04em;margin:16px 0}p{color:#9aa8aa;max-width:740px}nav{display:flex;gap:22px;flex-wrap:wrap;margin:26px 0}a{color:#88c8bc;text-decoration:none}section{margin:46px 0}h2{font-size:17px;font-weight:500;display:flex;justify-content:space-between}small{color:#718184;font-size:12px}.terminal{overflow:auto;background:#121b1c;border:1px solid #354849;border-radius:10px;padding:20px 22px}pre{margin:0;font:14px/1.7 'Sarasa Mono SC','Noto Sans Mono CJK SC',monospace;tab-size:2}.metrics{display:flex;gap:36px;padding:22px 0;color:#9aa8aa}.metrics b{display:block;font:28px/1.4 monospace;color:#e5e5dc}footer{border-top:1px solid #354849;padding:24px 0;color:#718184;font-size:12px}@media(max-width:700px){main{padding:0 16px;margin:30px auto}h1{font-size:32px}.metrics{flex-wrap:wrap}.terminal{padding:14px}pre{font-size:12px}}</style>
-<main><header><div class="eyebrow">DSH / FIELDNOTES · DESIGN 01</div><h1>把注意力留给工作。</h1><p>终端工作台的第一版：清晰的对话层级、可查看的上下文、可追溯的工具调用。以下画面由实际 TUI 组件直接导出，使用固定演示数据。</p></header>
+<main><header><div class="eyebrow">DEEPSEEK TUI · DESIGN 02</div><h1>开始工作，也继续之前的工作。</h1><p>恢复鲸鱼欢迎页，用不同的角色标记与底色区分双方；输入区保留简洁的提示符。参考 Claude Code 的会话与交互设计。以下画面由实际 TUI 组件直接导出，使用固定演示数据。</p></header>
 <nav>${gallery.map((scene) => `<a href="#${scene.id}">${scene.label}</a>`).join('')}</nav>
-<div class="metrics"><div><b>${metrics.baseline.subsequentHistoryRenders} → ${metrics.firstVersion.subsequentHistoryRenders}</b>1,000 条历史 × 20 次更新：重复渲染历史行次数</div><div><b>48 / 100</b>可复现的终端宽度</div></div>
+<div class="metrics"><div><b>01 → 02</b>鲸鱼欢迎页 · 更清楚的对话层级 · 会话恢复</div><div><b>48 / 100</b>可复现的终端宽度</div></div>
 ${gallery.map((scene) => `<section id="${scene.id}"><h2>${scene.label}<small>${scene.width} columns · ${scene.lines.length} lines</small></h2><div class="terminal"><pre>${ansiHtml(scene.lines.join('\n'))}</pre></div></section>`).join('')}
 <footer>基线 ${baselineCommit.slice(0, 12)} · ${process.version} · 固定演示数据，无模型调用。尺寸与排版由终端组件生成；浏览器字体和终端字体可能略有差异。<br>复现：npm run design:preview · 交互：npm run demo · 性能原始数据：metrics.json</footer></main></html>`
 fs.writeFileSync(path.join(output, 'index.html'), html)

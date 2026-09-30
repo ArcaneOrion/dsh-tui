@@ -426,11 +426,12 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   }
 
   /** 把会话缓冲刷进持久化存储。退出前必须调用，否则最后一段对话可能丢。 */
-  async function flush() {
+  async function flush({ strict = false } = {}) {
     if (agent === undefined) return
     try {
       await ctx.get('sessions')?.flush?.(agent.session)
-    } catch {
+    } catch (error) {
+      if (strict) throw error
       // flush 失败不应阻止退出流程。
     }
   }
@@ -460,6 +461,7 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     interrupt,
     flush,
     dispose,
+    attachView(nextView) { view = nextView },
     runtime: createRuntimeAccess(ctx, () => agent),
     ownsAgent(candidate) {
       if (candidate === agent) return true
@@ -548,6 +550,27 @@ export function createRuntimeAccess(ctx, getAgent) {
     return current
   }
   return {
+    async sessions({ all = false, signal } = {}) {
+      const current = agent()
+      const query = ctx.get('sessionQuery')
+      if (typeof query?.listSessions !== 'function') throw new Error('当前运行时没有会话目录服务')
+      const cwd = current.session.header?.cwd ?? process.cwd()
+      const records = (await query.listSessions(signal)).filter((record) => record.persisted && !record.live && record.header.origin !== 'subagent'
+        && (all || record.header.cwd === cwd)).slice(0, 100)
+      let titles = []
+      if (typeof query.readTitleSnapshots === 'function') titles = await query.readTitleSnapshots(records.map((record) => record.header.id), signal)
+      const titleMap = new Map(titles.filter((row) => row.status === 'fulfilled').map((row) => [row.sessionId, row.value.title]))
+      return records.map(({ header }) => ({ id: String(header.id), cwd: header.cwd, createdAt: header.createdAt,
+        title: titleMap.get(header.id)?.title, updatedAt: titleMap.get(header.id)?.updatedAt ?? header.createdAt }))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+    },
+    async validateResume(id) {
+      const query = ctx.get('sessionQuery')
+      if (typeof query?.readTitleSnapshot === 'function') {
+        const snapshot = await query.readTitleSnapshot(SessionId(id))
+        if (snapshot.session.origin === 'subagent') throw new Error('子 Agent 会话请从 /agents 查看，不能作为主会话恢复')
+      }
+    },
     snapshot() {
       const current = agent()
       return { status: current.status,

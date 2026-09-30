@@ -1,5 +1,17 @@
 # 设计依据与运行时发现
 
+## 第二轮反馈与定位
+
+- 用户不喜欢“› 写下你要做的事”，认为首次进入太单调、双方角色区分不足。
+- 第一版已提交 f8ce820；保留第一版 benchmark 为固定材料。
+- Ctrl+T 的应用级 input listener 位于 pi-tui 的 key-release 过滤之前；当前没有过滤 release/repeat，可能按下和松开各切一次。
+- 原生 sessionQuery.listSessions() 读取持久与 live 统一目录，readTitleSnapshots 可批量读取标题；只有启动参数 --resume 已实现。
+- Tavily 搜索受账号额度限制，已直接读取 Claude Code 官方 interactive-mode / common-workflows / sessions 文档。
+- 官方资料确认 /resume 在会话内打开选择器，Ctrl+O 切换详细 transcript；这里保留用户已使用的 Ctrl+T 思考切换，不照搬 Claude Code 的任务清单绑定。
+- 输入角色采用 > 标记与底色，助手采用 ● 与 DeepSeek 标签；欢迎页恢复鲸鱼，增加快捷入口与会话信息，输入框仅保留边界和光标提示符。
+- 第二轮真实 PTY：持久会话标题进入 /resume 列表，选择后恢复用户文字、模型路由、5.9k 上下文；选择过程无外部模型调用。
+- 第二轮 304 项测试通过；窄/宽欢迎页与会话界面均无字符宽度越界。
+
 ## 已确认
 
 - 使用 pi-tui 0.82 的命令式 render(width) → string[]，继承终端原生滚动。

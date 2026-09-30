@@ -43,7 +43,7 @@ function searchableList({ theme, options, maxVisible, onPick }) {
 
   function computeFiltered() {
     if (query === '') return options
-    let filtered = fuzzyFilter(options, query, (item) => `${item.value} ${item.label}`)
+    let filtered = fuzzyFilter(options, query, (item) => `${item.value} ${item.label} ${item.description ?? ''}`)
     if (filtered.length === 0) {
       // 子序列太严（比如按中文渠道名搜）时退回子串匹配；再不行才真空。
       const lower = query.toLowerCase()

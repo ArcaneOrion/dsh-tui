@@ -30,7 +30,7 @@ app = createApp({ view, theme, registry,
   onInterrupt() {}, onExit: exit,
 })
 workbench = createWorkbench({ app, kernel: { runtime, submit: runtime.submit }, view, registry, runCommand: command })
-registry.setHeader(createBanner({ theme, getSubtitle: () => '交互演示 · 固定样例 · 无网络请求', getPreset: () => 'DESIGN 01' }))
+registry.setHeader(createBanner({ theme, getSubtitle: () => '交互演示 · 固定样例 · 无网络请求', getPreset: () => 'DESIGN 02', hasConversation: () => view.rows.length > 0 }))
 process.on('SIGTERM', exit)
 process.on('SIGINT', exit)
 app.start()

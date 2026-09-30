@@ -34,6 +34,7 @@ import { applySessionEvent, createView } from './projection.js'
 import { createRegistry } from './registry.js'
 import { createTheme } from './theme.js'
 import { createWorkbench } from './workbench.js'
+import { createSessionSwitcher } from './session-switch.js'
 
 /** 稳定的 Cordis 插件名。 */
 export const name = 'dsh-tui'
@@ -87,6 +88,7 @@ export async function apply(ctx) {
   /** @type {ReturnType<typeof createApp> | undefined} */
   let app
   let workbench
+  let sessionSwitcher
 
   // ── 内核桥 ────────────────────────────────────────────────────────────
 
@@ -320,8 +322,19 @@ export async function apply(ctx) {
   const commandSystem = createCommandSystem({ ctx, getAgent: () => kernel.agent })
 
   // 补全：命令走 `/`，文件引用走 `@`。
-  const mentionAutocomplete = createNativeMentionAutocomplete({ runtime: kernel.runtime,
-    fallback: createMentionAutocomplete({ listFiles: createFileIndex(process.cwd(), { warm: false }) }) })
+  let localFileCwd
+  let localFileIndex
+  const fallbackFiles = () => {
+    const cwd = kernel.agent.session.header?.cwd ?? process.cwd()
+    if (cwd !== localFileCwd) { localFileCwd = cwd; localFileIndex = createFileIndex(cwd, { warm: false }) }
+    return localFileIndex()
+  }
+  const mentionAutocomplete = createNativeMentionAutocomplete({ runtime: {
+    parseMention: (...args) => kernel.runtime.parseMention(...args),
+    formatMention: (...args) => kernel.runtime.formatMention(...args),
+    files: (...args) => kernel.runtime.files(...args),
+  },
+    fallback: createMentionAutocomplete({ listFiles: fallbackFiles }) })
 
   /** 自检报告：直接回答「哪些内核服务接上了、哪些没有」。 */
   function doctorReport() {
@@ -355,6 +368,10 @@ export async function apply(ctx) {
   async function runCommand(line) {
     const parsed = parseCommandLine(line)
     if (parsed === undefined) return
+    if (sessionSwitcher?.busy && !['exit', 'quit'].includes(parsed.name)) {
+      app?.notice?.('正在恢复会话，请稍候')
+      return
+    }
     if (await workbench?.execute(parsed.name, parsed.rest)) return
 
     if (commandSystem.isLocal(parsed.name)) {
@@ -444,6 +461,7 @@ export async function apply(ctx) {
       theme,
       registry,
       onSubmit: (text) => {
+        if (sessionSwitcher?.busy) { app?.notice?.('正在恢复会话，草稿已保留'); return false }
         // 提交环节的任何异常都必须在界面上**看得见**。静默失败会让用户
         // 以为是按键失灵，而真正的原因藏在没人看的地方。
         //
@@ -492,7 +510,20 @@ export async function apply(ctx) {
     throw new Error(`dsh-tui: failed to mount the terminal UI — ${error?.message ?? error}`)
   }
 
-  workbench = createWorkbench({ app, kernel, view, registry, runCommand })
+  const buildWorkbench = () => createWorkbench({ app, kernel, view, registry, runCommand,
+    resumeSession: (id) => sessionSwitcher.resume(id) })
+  sessionSwitcher = createSessionSwitcher({ ctx, view, createKernel, getKernel: () => kernel,
+    isExiting: () => exiting, onEvent, onUpdate: () => app?.requestRender(),
+    onCommit: (next) => {
+      kernel = next
+      modelLabel = next.selection ? `${next.selection.provider}/${next.selection.model}` : ''
+      presetLabel = next.preset ?? ''
+      workbench = buildWorkbench()
+      app.resetConversation()
+      void footerInfo.warmUp()
+    },
+  })
+  workbench = buildWorkbench()
   ctx.provide('dshTui', { version: 1, registry, notice: app.notice, document: app.document,
     setEditorText: app.setEditorText, requestRender: app.requestRender })
 
@@ -504,8 +535,9 @@ export async function apply(ctx) {
     createBanner({
       theme,
       getSubtitle: () => `dsh-tui ${pkg.version} · ${modelLabel === '' ? 'default model' : modelLabel}`,
-      getWorkspace: () => process.cwd(),
+      getWorkspace: () => kernel.agent.session.header?.cwd ?? process.cwd(),
       getPreset: () => presetLabel,
+      hasConversation: () => view.rows.length > 0,
     }),
   )
 

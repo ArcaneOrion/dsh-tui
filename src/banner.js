@@ -10,7 +10,7 @@
  */
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
-import { pair } from './layout.js'
+import { fit, pair } from './layout.js'
 
 /** 鲸鱼（5 行）。用占位符标出两段用色，渲染时再替换。 */
 const WHALE = [
@@ -58,19 +58,47 @@ export function bannerLines(width) {
  * @param {object} options.theme
  * @param {()=>string|undefined} [options.getSubtitle] - 副标题（版本/模型等）
  */
-export function createBanner({ theme, getSubtitle, getWorkspace, getPreset }) {
+export function createBanner({ theme, getSubtitle, getWorkspace, getPreset, hasConversation = () => false }) {
   return {
     render(width) {
-      const identity = theme.fg('accent', theme.bold(' DSH')) + theme.fg('muted', '  /  FIELDNOTES')
-      const out = [pair(identity, theme.fg('dim', getPreset?.() ?? ''), width)]
-      const subtitle = getSubtitle?.()
-      if (typeof subtitle === 'string' && subtitle !== '') {
-        out.push(theme.fg('dim', truncateToWidth(' ' + subtitle, width)))
+      const subtitle = getSubtitle?.() ?? ''
+      const workspace = getWorkspace?.() ?? ''
+      const preset = getPreset?.() ?? ''
+      if (hasConversation() || width < 32) {
+        return [fit(theme.bold(theme.fg('accent', ' DeepSeek')) + theme.fg('dim', preset ? `  ·  ${preset}` : ''), width),
+          fit(theme.fg('muted', ' ' + subtitle), width), '']
       }
-      const workspace = getWorkspace?.()
-      if (workspace) out.push(theme.fg('muted', truncateToWidth(' ' + workspace, width)))
-      out.push('')
-      return out
+      const boxWidth = Math.min(width, 104)
+      const inner = Math.max(0, boxWidth - 4)
+      const border = (text) => theme.fg('welcomeBorder', text)
+      const padded = (text, cells) => fit(text, cells) + ' '.repeat(Math.max(0, cells - visibleWidth(fit(text, cells))))
+      const row = (text) => border('│') + ' ' + padded(text, inner) + ' ' + border('│')
+      const title = '─ DeepSeek Harness '
+      const out = [border('╭' + fit(title, boxWidth - 2) + '─'.repeat(Math.max(0, boxWidth - 2 - visibleWidth(title))) + '╮')]
+      const menu = [
+        theme.bold('会话与工作区'),
+        theme.fg('accent', '/resume') + theme.fg('muted', '   继续之前的会话'),
+        theme.fg('accent', '/model') + theme.fg('muted', '    选择模型'),
+        theme.fg('accent', '@文件') + theme.fg('muted', '     引用项目文件'),
+        theme.fg('accent', 'Ctrl+K') + theme.fg('muted', '    工具与上下文'),
+      ]
+      out.push(row(''))
+      if (boxWidth >= 72) {
+        const leftWidth = 27
+        for (let i = 0; i < WHALE.length; i++) {
+          out.push(row(padded(theme.fg('accent', WHALE[i]), leftWidth) + border('│') + '  ' + menu[i]))
+        }
+      } else {
+        for (const whale of WHALE) out.push(row(theme.fg('accent', whale)))
+        out.push(row(''))
+        out.push(row(theme.fg('muted', '/resume 继续会话 · /model 模型')))
+        out.push(row(theme.fg('muted', 'Ctrl+K 工作台 · @文件 引用')))
+      }
+      out.push(row(''))
+      out.push(row(pair(theme.fg('muted', subtitle), theme.fg('dim', preset), inner)))
+      if (workspace) out.push(row(theme.fg('dim', workspace)))
+      out.push(border('╰' + '─'.repeat(Math.max(0, boxWidth - 2)) + '╯'), '')
+      return out.map((line) => fit(line, width))
     },
     invalidate() {
       // 无缓存，无需清理。

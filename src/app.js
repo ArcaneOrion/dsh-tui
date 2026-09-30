@@ -19,7 +19,7 @@
  * scrollback。所以历史滚动、选择、复制全部是终端原生行为，不需要虚拟列表。
  */
 
-import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { Container, Editor, Key, matchesKey, isKeyRelease, isKeyRepeat, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { DefaultFooter } from './footer.js'
 import { createEnterCompat, enterCompatFromEnv } from './input-compat.js'
 import { logKey, logTerminalState } from './keylog.js'
@@ -122,7 +122,7 @@ export class ChatView {
       lines.push('')
     }
 
-    if (lines.length === 0) {
+    if (lines.length === 0 && this.registry.header === undefined) {
       lines.push('')
       lines.push(fit(this.theme.fg('muted', '  从一个问题、一份文件，或一件想完成的事开始。'), width))
       lines.push(fit(this.theme.fg('dim', '  开始输入 · /context 上下文 · /tools 工具 · /agents 协作'), width))
@@ -407,11 +407,16 @@ export function createApp(options) {
     // 诊断：记录 TUI 实际收到的字节（配合 stdin 通道对照，见 src/keylog.js）。
     logKey('tui', data)
 
+    // Application listeners run before pi-tui's focused-component release
+    // filter. A release must not toggle an action a second time.
+    if (isKeyRelease(data)) return { consume: true }
+
     // 先做字节翻译：把终端发来的 LF 归一成 CR（仅在判定需要时）。
     const translated = translateInput(data)
     if (translated !== data) return { data: translated }
 
     if (matchesKey(data, Key.ctrl('c'))) {
+      if (isKeyRepeat(data)) return { consume: true }
       const now = Date.now()
       const isDouble = now - lastCtrlC < DOUBLE_CTRL_C_MS
       lastCtrlC = now
@@ -447,7 +452,10 @@ export function createApp(options) {
     if (!tui.hasOverlay()) {
       const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking']]
       for (const [key, command] of shortcuts) {
-        if (matchesKey(data, key)) { onCommand?.(command); return { consume: true } }
+        if (matchesKey(data, key)) {
+          if (!isKeyRepeat(data)) onCommand?.(command)
+          return { consume: true }
+        }
       }
     }
     return undefined
@@ -461,6 +469,12 @@ export function createApp(options) {
     /** 弹一个文本输入框，返回输入内容或 undefined。 */
     askText: prompter.askText,
     document: prompter.document,
+    resetConversation() {
+      chat.invalidate()
+      working.invalidate()
+      footer?.invalidate?.()
+      tui.requestRender(true)
+    },
     get editor() {
       return editor
     },

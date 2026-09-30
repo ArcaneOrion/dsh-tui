@@ -1,5 +1,6 @@
 /** User actions over runtime capabilities. No DSH imports or synthetic model state. */
 const ACTIONS = [
+  ['resume', '恢复会话', '搜索并继续之前的工作'],
   ['context', '上下文', '查看模型能看到的内容与来源'],
   ['inspect', '工具记录', '检查参数、结果和完整输出'],
   ['agents', 'Agent 协作', '当前会话的子 Agent 目录'],
@@ -25,9 +26,33 @@ export function toolDocument(row) {
     row.resultView ? `\n结构化展示数据\n${pretty(row.resultView)}` : ''].filter((line) => line !== undefined).join('\n')
 }
 
-export function createWorkbench({ app, kernel, view, registry, runCommand }) {
+export function createWorkbench({ app, kernel, view, registry, runCommand, resumeSession }) {
   let busy = false
   const runtime = kernel.runtime
+
+  async function resume(rest) {
+    if (!resumeSession) return app.document({ title: '恢复会话', text: '请在 dsh tui 中使用 /resume 恢复真实会话。' })
+    let id = rest?.trim()
+    if (!id) {
+      let all = false
+      for (;;) {
+        const sessions = await runtime.sessions({ all })
+        const selected = await app.choose({ title: '恢复会话',
+          detail: `${all ? '所有工作区' : '当前工作区'} · 最近 ${sessions.length} 个可恢复会话 · 输入搜索`,
+          options: [
+            ...sessions.map((session) => ({ value: session.id, label: session.title || session.id,
+              description: `${new Date(session.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} · ${session.cwd ?? ''}` })),
+            { value: '__scope__', label: all ? '切换到当前工作区' : '查看所有工作区' },
+          ],
+        })
+        if (selected === undefined) return
+        if (selected === '__scope__') { all = !all; continue }
+        id = selected
+        break
+      }
+    }
+    if (await resumeSession(id)) app.notice(`已恢复会话 · ${id.replace(/^session-/, '').slice(0, 8)}`)
+  }
 
   async function context() {
     const entries = runtime.context()
@@ -97,12 +122,13 @@ export function createWorkbench({ app, kernel, view, registry, runCommand }) {
 
   return {
     async execute(name, rest) {
-      if (!['workbench', 'context', 'inspect', 'tools', 'agents', 'queue', 'inject', 'steer', 'thinking'].includes(name)) return false
+      if (!['workbench', 'resume', 'context', 'inspect', 'tools', 'agents', 'queue', 'inject', 'steer', 'thinking'].includes(name)) return false
       if (busy) return true
       busy = true
       let nextCommand
       try {
         if (name === 'workbench') nextCommand = await app.choose({ title: '工作台', detail: '选择一个工作视角', options: ACTIONS.map(([value, label, description]) => ({ value, label, description })) })
+        else if (name === 'resume') await resume(rest)
         else if (name === 'context') await context()
         else if (name === 'inspect') await inspect()
         else if (name === 'tools') await tools()

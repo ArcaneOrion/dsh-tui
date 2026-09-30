@@ -21,6 +21,7 @@ export const LOCAL_COMMANDS = Object.freeze([
   { name: 'preset', description: '查看或选择会话预设（/preset）' },
   { name: 'doctor', description: '自检：哪些内核服务接上了、哪些没有' },
   { name: 'workbench', description: '打开工作台 · Ctrl+K' },
+  { name: 'resume', description: '恢复历史会话（/resume 或 /resume <id>）' },
   { name: 'context', description: '查看模型当前上下文与注入来源' },
   { name: 'inject', description: '补充上下文；不主动唤醒 Agent' },
   { name: 'steer', description: '在最近的下一步介入当前工作' },

@@ -1,8 +1,8 @@
-# DSH TUI · Fieldnotes
+# DSH TUI
 
-基于 DSH 原生内核与 `@earendil-works/pi-tui` 的终端工作台。第一版采用青绿强调、低饱和状态色与纵向引导线；对话保持轻量，上下文与工具全文按需查看。
+基于 DSH 原生内核与 `@earendil-works/pi-tui` 的终端工作台。第二版结合原来的鲸鱼标识与 Claude Code 的终端交互：蓝色强调、暖色欢迎框、清楚的角色标记与简洁输入区。上下文与工具全文按需查看。
 
-[设计说明](docs/DESIGN-V1.md) · [前后对照](docs/benchmark-v1/index.html) · [benchmark 数据](docs/benchmark-v1/metrics.json)
+[第二版设计说明](docs/DESIGN-V2.md) · [最新前后对照](docs/benchmark-v2/index.html) · [第一版归档](docs/benchmark-v1/index.html)
 
 ## 开始使用
 
@@ -35,6 +35,7 @@ npm run demo
 | 入口 | 行为 |
 |---|---|
 | `Ctrl+K`、`/workbench` | 搜索并选择工作视角 |
+| `/resume`、`/resume <id>` | 搜索历史会话并原地恢复，可切换当前 / 所有工作区 |
 | `Ctrl+O`、`/inspect` | 工具参数、原始结果与结构化展示数据全文 |
 | `Ctrl+T`、`/thinking` | 展开 / 折叠思考 |
 | `/context` | 当前模型上下文与来源 |
@@ -51,6 +52,8 @@ npm run demo
 | `/doctor` | 真实服务接入诊断 |
 
 全文面板：`↑↓` / `j k` 滚动，`PgUp/PgDn` 翻页，`Home/End` / `g G` 到首尾，`Esc` 返回。面板打开时 Esc 优先关面板；回到编辑器后 Esc 中断回合，保留待处理输入。空闲时 Ctrl+C 退出，运行时连续两次 Ctrl+C 退出。
+
+Ctrl+T 按一次切换思考显示，长按重复与松开事件不会再次切换。`/resume` 先准备目标会话并保存当前会话，成功后更新历史、模型、预设与状态栏；失败保留当前会话。当前回合、子 Agent 正在运行或仍有待处理输入时，先结束工作或通过 `/queue` 处理队列，再切换。列表显示最近 100 个可恢复的非驻留主会话；也可以直接传完整 ID。
 
 `@` 优先使用原生 `fileReferences`，支持目录与 `@"带空格路径"`。它是路径引用，模型按需 read；UI 不会暗中展开文件全文。缺少服务时降级为本地路径补全。
 
@@ -93,7 +96,7 @@ npm run demo
 npm run design:preview
 ```
 
-`design:preview` 读取 Git HEAD 作为旧版基线，在 `/tmp` 建源码副本，用同样的事件和宽度渲染新旧组件，输出 HTML、ANSI、JSON 到 `docs/benchmark-v1/`。基线不包含未提交的旧改动；不访问模型。
+`design:preview` 读取 Git HEAD 作为基线，也可用 `npm run design:preview -- --baseline f8ce820` 指定第一版提交。在 `/tmp` 建源码副本，用同样的事件和宽度渲染新旧组件，输出 HTML、ANSI、JSON 到 `docs/benchmark-v2/`，保留第一版材料；不访问模型。
 
 已验证：组件与交互测试、真实 PTY 演示、隔离 DSH profile 挂载、26 项工具目录、上下文注入与队列撤回。本轮未发送真实模型计费请求；流式、工具结果与审批回归使用确定性事件和服务测试。
 

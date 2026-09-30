@@ -1,5 +1,17 @@
 # 进度记录
 
+## 第二轮
+
+- 第一版已提交 f8ce820。
+- 查阅 Claude Code 官方 interactive-mode、common-workflows、sessions；Tavily 额度不足改为直接读取官方文档。
+- Ctrl+T 根因确认：应用监听先于底层 release 过滤；现忽略 release 与 toggle repeat，并覆盖按下/长按/松开/再次按下测试。
+- 恢复鲸鱼欢迎页、蓝色强调和暖色边框；用户底色 + ❯，助手 ● DeepSeek；输入区仅保留提示符和边界。
+- /resume 使用持久目录与标题，支持当前/所有工作区搜索；候选恢复成功且旧会话保存后才切换，刷新底栏和文件补全绑定。
+- 304 项测试通过。正在验证真实持久会话切换。
+- 真实持久会话恢复已成功：列表显示标题，选择后用户历史、模型路由和 5.9k 用量恢复；无效 ID 失败后旧会话仍可用。
+- 最终 npm test 304 项通过，check / audit / diff --check 通过；验证进程已正常退出。
+- 第二轮预览与截图保存在 docs/benchmark-v2，说明与官方参考在 docs/DESIGN-V2.md。第二轮作为独立本地提交保存。
+
 ## 开始
 
 - 已读取 frontend-design 与 planning-with-files 技能。

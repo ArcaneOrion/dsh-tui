@@ -10,7 +10,7 @@
  * 其中 Component 只需要满足 pi-tui 的 `{ render(width), invalidate() }`。
  */
 
-import { Container, Markdown, Text } from '@earendil-works/pi-tui'
+import { Box, Container, Markdown, Text } from '@earendil-works/pi-tui'
 import { infoRenderer } from './startup-info.js'
 import { ToolCard } from './tool-cards.js'
 import { rail, fit } from './layout.js'
@@ -25,9 +25,10 @@ import { rail, fit } from './layout.js'
  * 专门的 token。
  */
 export function userRenderer({ row, theme }) {
-  return rail(new Markdown(row.text, 0, 0, theme.markdown, { color: (text) => theme.fg('userMessageText', text) }), theme, {
-    tone: 'accent', label: theme.fg('accent', theme.bold(row.sourceKind === 'context' ? '上下文' : '你')),
-  })
+  const box = new Box(1, 0, (text) => theme.bg('userMessageBg', text))
+  box.addChild(new Text(theme.bold(theme.fg('userMessageText', '❯ 你')), 0, 0))
+  box.addChild(new Markdown(row.text, 2, 0, theme.markdown, { color: (text) => theme.fg('userMessageText', text) }))
+  return box
 }
 
 /**
@@ -62,7 +63,7 @@ export function assistantRenderer({ row, theme, registry }) {
   return {
     invalidate: () => container.invalidate(),
     render(width) {
-      return [fit(theme.fg('accent', ' DSH') + theme.fg('dim', row.done === false ? '  ·  正在回应' : ''), width), ...container.render(width)]
+      return [fit(theme.fg('accent', theme.bold('● DeepSeek')) + theme.fg('dim', row.done === false ? '  正在回应' : ''), width), ...container.render(width)]
     },
   }
 }

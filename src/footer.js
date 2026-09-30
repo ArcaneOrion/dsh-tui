@@ -149,6 +149,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   /** 最近一次请求的真实路由（增量扫描，只读新事件）。 */
   let latestRouteCache
   let eventTail
+  let observedSession
 
   /**
    * 最近一次请求**实际用的**路由（fallback）。
@@ -164,6 +165,13 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   function latestRoute() {
     const session = getAgent()?.session
     if (session === undefined || session === null) return latestRouteCache
+    if (session !== observedSession) {
+      observedSession = session
+      eventTail = undefined
+      latestRouteCache = undefined
+      tokenCache = { seq: -1, used: undefined }
+      gitCache.at = undefined
+    }
     eventTail ??= createEventTail(session)
 
     let fresh
@@ -276,12 +284,13 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       const used = measureTokens()
       // 用 path.basename 而不是 split('/')：后者在 Windows 上会把整个路径
       // 当文件名显示出来。
-      const base = path.basename(cwd)
+      const activeCwd = getAgent()?.session?.header?.cwd ?? cwd
+      const base = path.basename(activeCwd)
       return {
         model,
         thinking: effort,
-        dir: base === '' ? cwd : base,
-        branch: readGitBranch(cwd, Date.now(), gitCache),
+        dir: base === '' ? activeCwd : base,
+        branch: readGitBranch(activeCwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: recordedLimit ?? (key === limitKey ? contextLimit : undefined) },
         sandbox: shortSandboxMode(sandboxMode()),
       }

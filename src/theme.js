@@ -77,9 +77,9 @@ export const DARK_TOKENS = Object.freeze({
   dim: '#718184',
 
   // 强调 / 边框
-  accent: '#88c8bc',
+  accent: '#7aa2f7',
   border: '#354849',
-  borderAccent: '#88c8bc',
+  borderAccent: '#7aa2f7',
   borderMuted: '#283738',
 
   // 状态
@@ -91,9 +91,9 @@ export const DARK_TOKENS = Object.freeze({
   //
   // 命名对齐 pi 的消息词汇（userMessageBg / userMessageText / thinkingText），
   // 这样两边的设计语言是同一套——照着 pi 读代码时不用做心智翻译。
-  userMessageBg: '#192626',
+  userMessageBg: '#242b38',
   userMessageText: '#e4e4dc',
-  userBorder: '#88c8bc',
+  userBorder: '#7aa2f7',
   assistantBorder: '#354849',
   thinkingText: '#9aa8aa',
 
@@ -116,14 +116,15 @@ export const DARK_TOKENS = Object.freeze({
   panelBorder: '#354849',
 
   // 底栏：每段一个色相（对照 pi 的实机配色），分隔线用暖琥珀。
-  footerBorder: '#354849',
+  footerBorder: '#c1843a',
   dirLabel: '#88c8bc',
   branchLabel: '#9aa8aa',
   thinkLabel: '#dfbb83',
 
   // 输入框
   editorBorder: '#354849',
-  editorBorderActive: '#88c8bc',
+  editorBorderActive: '#7aa2f7',
+  welcomeBorder: '#c1843a',
 })
 
 // ── 主题对象 ─────────────────────────────────────────────────────────────
