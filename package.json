@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.js",
+  "bin": {
+    "dsh-tui": "./bin/dsh-tui.js"
+  },
   "exports": {
     ".": "./src/index.js",
     "./startup": "./src/startup.js",
@@ -23,8 +26,10 @@
   ],
   "files": [
     "src",
+    "bin",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "AUDIT.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
