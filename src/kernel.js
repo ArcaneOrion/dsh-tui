@@ -43,6 +43,21 @@ export function resolveSelection(ctx, startup) {
 }
 
 /**
+ * 解析工具参数。
+ *
+ * 模型流式生成时 `arguments` 可能还不是合法 JSON；那时不解析，让工具的
+ * `presentCall` 自己兜底，而不是在这里抛错把这次调用丢掉。
+ */
+function parseToolArgs(rawArgs) {
+  if (typeof rawArgs !== 'string' || rawArgs.trim() === '') return undefined
+  try {
+    return JSON.parse(rawArgs)
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 创建内核桥。
  *
  * @param {object} options
@@ -100,11 +115,37 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   agent = handle.agent
   const boundSessionId = agent.session.id
 
+  // ── 工具展示意图解析器 ──────────────────────────────────────────────────
+  //
+  // 放在这一层是因为只有本层拿得到 `ctx.tools`；投影层是纯函数，不认识任何
+  // 内核服务，也不该认识任何工具名。
+  //
+  // dsh 的工具通过 `presentCall` / `presentResult` 声明一种与提供方无关的卡片
+  // 类型（generic/terminal/diff/search/read/web），所以**新工具装上就自带合适的
+  // 卡片**，这里不需要维护一张工具名→卡片的表。
+  const toolsService = ctx.get('tools')
+  const present = {
+    call(toolName, rawArgs) {
+      const definition = toolsService?.get?.(toolName)
+      if (typeof definition?.presentCall !== 'function') return undefined
+      return definition.presentCall(parseToolArgs(rawArgs))
+    },
+    result(toolName, rawArgs, resultData) {
+      const definition = toolsService?.get?.(toolName)
+      if (typeof definition?.presentResult !== 'function') return undefined
+      return definition.presentResult(parseToolArgs(rawArgs), {
+        content: resultData?.message?.content ?? [],
+        isError: resultData?.message?.isError === true,
+        meta: resultData?.meta,
+      })
+    },
+  }
+
   // 恢复时先把已有事件重放进视图，让历史对话立刻可见。
   // 注意顺序：先 replay 再订阅，否则同一条事件会被应用两次。
   if (resuming) {
     try {
-      replay(view, agent.session.events)
+      replay(view, agent.session.events, present)
     } catch {
       // 历史里出现投影层不认识的东西不应该阻止启动。
     }
@@ -119,7 +160,7 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   disposers.push(
     ctx.on('session/event', (session, event) => {
       if (session === undefined || session.id !== boundSessionId) return
-      if (applySessionEvent(view, event) === true) onUpdate()
+      if (applySessionEvent(view, event, present) === true) onUpdate()
     }),
   )
 

@@ -84,11 +84,14 @@ function pushRow(view, row) {
 
 /**
  * 应用一条**已提交**的会话事件。
+ *
  * @param {object} view - createView() 的产物
  * @param {{seq?:number,type:string,data:any}} event - dsh session 事件
+ * @param {{call?:Function,result?:Function}} [present] - 工具展示意图解析器。
+ *   由内核桥注入（它才有 ctx.tools）；投影层本身不认识任何工具名。
  * @returns {boolean} 是否改变了视图
  */
-export function applySessionEvent(view, event) {
+export function applySessionEvent(view, event, present = undefined) {
   if (event === null || typeof event !== 'object') return false
   const data = event.data
 
@@ -158,12 +161,20 @@ export function applySessionEvent(view, event) {
     }
 
     case 'tool/call': {
+      // 问工具本人「你想怎么被展示」，而不是在这里按工具名分支。
+      let callView
+      try {
+        callView = present?.call?.(data?.name, data?.arguments)
+      } catch {
+        // 展示意图解析失败不影响这次调用被记录。
+      }
       const row = pushRow(view, {
         key: nextKey('tool'),
         role: MessageRole.TOOL,
         toolName: data?.name,
         callId: data?.callId,
         args: data?.arguments,
+        callView,
         text: '',
         done: false,
         seq: event.seq,
@@ -177,24 +188,37 @@ export function applySessionEvent(view, event) {
       const row = typeof callId === 'string' ? view.tools.get(callId) : undefined
       const text = textOfContent(data?.message?.content)
       const isError = data?.message?.isError === true
+
+      /** 解析结果态展示意图；失败就退回原文。 */
+      const resolveResultView = (toolName, rawArgs) => {
+        try {
+          return present?.result?.(toolName, rawArgs, data)
+        } catch {
+          return undefined
+        }
+      }
+
       if (row !== undefined) {
         row.text = text
         row.done = true
         row.isError = isError
         row.errorReason = data?.error?.reason
+        row.resultView = resolveResultView(row.toolName, row.args)
         row.rev = (row.rev ?? 0) + 1
         touch(view)
         return true
       }
       // 没有配到对应的 call（例如 resume 时只读到了 result），补一行。
+      const orphanToolName = data?.message?.name ?? 'tool'
       pushRow(view, {
         key: nextKey('tool-result'),
         role: MessageRole.TOOL,
-        toolName: 'tool',
+        toolName: orphanToolName,
         callId,
         text,
         done: true,
         isError,
+        resultView: resolveResultView(orphanToolName, undefined),
         seq: event.seq,
       })
       return true
@@ -290,8 +314,8 @@ function flushStreaming(view) {
  * @param {object} [view]
  * @param {Iterable<object>} events
  */
-export function replay(view = createView(), events) {
-  for (const event of events) applySessionEvent(view, event)
+export function replay(view = createView(), events, present = undefined) {
+  for (const event of events) applySessionEvent(view, event, present)
   view.streaming = null
   // 回放的是**历史**：日志末尾即使停在 turn/start（上次进程崩过），也不代表
   // 现在有回合在跑。实时性由 agent 状态决定，不由历史决定——否则 resume 之后
