@@ -21,6 +21,7 @@
 
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { DefaultFooter } from './footer.js'
+import { createEnterCompat, enterCompatFromEnv } from './input-compat.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
 
@@ -372,7 +373,15 @@ export function createApp(options) {
   const DOUBLE_CTRL_C_MS = 1200
   let lastCtrlC = 0
 
+  // 回车兼容：有些终端把 Enter 发成 LF，而 pi-tui 只认 CR 提交（LF 是 Ctrl+J
+  // 的换行）。见 src/input-compat.js。
+  const translateInput = createEnterCompat({ force: enterCompatFromEnv() })
+
   tui.addInputListener((data) => {
+    // 先做字节翻译：把终端发来的 LF 归一成 CR（仅在判定需要时）。
+    const translated = translateInput(data)
+    if (translated !== data) return { data: translated }
+
     if (matchesKey(data, Key.ctrl('c'))) {
       const now = Date.now()
       const isDouble = now - lastCtrlC < DOUBLE_CTRL_C_MS
