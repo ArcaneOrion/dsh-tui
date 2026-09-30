@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建 / 缓存
+*.log
+.cache/
+dist/
+
+# 编辑器 / 系统
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# 本地实验产物
+tmp/
+scratch/
+*.local.*
+
+# 备份（本仓库自己的快照，不属于源码）
+.backup/
