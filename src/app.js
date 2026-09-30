@@ -38,10 +38,13 @@ export class ChatView {
     this.theme = theme
     this.registry = registry
     this.cache = undefined
+    this.rowCache = undefined
   }
 
   invalidate() {
     this.cache = undefined
+    // 行级缓存也要清：主题换了之后每一行都得按新配色重画。
+    if (this.rowCache !== undefined) this.rowCache.clear()
   }
 
   /** 渲染单行模型条目，返回字符串数组。 */
@@ -63,20 +66,43 @@ export class ChatView {
     }
   }
 
+  /**
+   * 按行缓存渲染结果。
+   *
+   * 为什么必须做：流式期间每个 token 都会推进 `view.revision`，帧缓存必然失效；
+   * 如果这时把几百上千行历史全部重建一遍（每行都 new Box/Markdown/Container），
+   * 就是「每个 token 一次全量 Markdown 渲染」。命中这里的缓存后，重绘只剩下
+   * 若干次 Map 查表和数组拼接，是一次 O(行数) 的廉价操作，而不是 O(行数) 的重建。
+   */
+  renderRowCached(row, width) {
+    this.rowCache ??= new Map()
+    const key = row.key ?? `idx-${this.rowCache.size}`
+    const rev = row.rev ?? 0
+    const hit = this.rowCache.get(key)
+    if (hit !== undefined && hit.rev === rev && hit.width === width) return hit.lines
+    const lines = this.renderRow(row, width)
+    this.rowCache.set(key, { rev, width, lines })
+    return lines
+  }
+
   render(width) {
     if (this.cache !== undefined && this.cache.width === width && this.cache.revision === this.view.revision) {
       return this.cache.lines
     }
 
     const lines = []
-    const push = (row) => {
-      lines.push(...this.renderRow(row, width))
+    // 注意：不要用 `lines.push(...arr)` —— 行数上万时会撞参数上限抛 RangeError。
+    const append = (arr) => {
+      for (const line of arr) lines.push(line)
+    }
+
+    for (const row of this.view.rows) {
+      append(this.renderRowCached(row, width))
       lines.push('') // 条目之间的空行
     }
 
-    for (const row of this.view.rows) push(row)
-
     // 正在生成的文本：按 assistant 渲染，末尾加一个光标块。
+    // 这一行每帧都会变，所以有意不进行缓存。
     const streaming = this.view.streaming
     if (streaming !== null && (streaming.text !== '' || streaming.reasoning !== '')) {
       const pseudo = {
@@ -86,7 +112,8 @@ export class ChatView {
         reasoning: streaming.reasoning,
         done: false,
       }
-      push(pseudo)
+      append(this.renderRow(pseudo, width))
+      lines.push('')
     }
 
     if (lines.length === 0) {
@@ -213,40 +240,97 @@ export function createApp(options) {
   const aboveWidgets = new Container()
   const belowWidgets = new Container()
 
-  const editorTheme = registry.editorFactory === undefined ? theme.editor : theme.editor
-  const editor = new Editor(tui, editorTheme)
+  // 编辑器与底栏各自住在一个槽位容器里，registry 一变就整体重建。
+  //
+  // 这一段是本设计的要害：如果把它们写成常量（`const footer = new DefaultFooter()`），
+  // 那么 registry 里的 setFooter / setEditor 就只是**看着存在、实际从不生效**的
+  // 死接口 —— 整个「每个区域都可替换」的主张就成了假的。
+  const editorSlot = new Container()
+  const footerSlot = new Container()
 
-  const footer = new DefaultFooter({ theme, registry, getInfo })
+  /** 当前生效的编辑器实例（重建时会换）。 */
+  let editor
+  /** 当前生效的底栏实例。 */
+  let footer
+  let disposed = false
 
-  // 一切界面变更都通过 registry 通知；订阅后重绘。
+  function buildEditor() {
+    const factory = registry.editorFactory
+    const component =
+      typeof factory === 'function' ? factory(tui, theme, registry) : new Editor(tui, theme.editor)
+    if (component !== undefined && component !== null) {
+      component.onSubmit = (text) => {
+        const trimmed = String(text ?? '').trim()
+        if (trimmed === '') return
+        component.setText('')
+        onSubmit(trimmed)
+      }
+    }
+    return component
+  }
+
+  function rebuildEditor() {
+    editorSlot.clear()
+    editor = buildEditor()
+    editorSlot.addChild(editor)
+    // 焦点必须跟着新编辑器走，否则替换之后用户打不了字。
+    try {
+      tui.setFocus(editor)
+    } catch {
+      // start() 之前 setFocus 可能不可用；start 之后会再设一次。
+    }
+  }
+
+  function rebuildFooter() {
+    footerSlot.clear()
+    footer = registry.footer ?? new DefaultFooter({ theme, registry, getInfo })
+    footerSlot.addChild(footer)
+  }
+
+  /** 工作动画定时器。帧间隔每次重建时从 registry 现取，所以 setWorkingIndicator 真的生效。 */
+  let ticker
+  function restartTicker() {
+    if (ticker !== undefined) clearInterval(ticker)
+    const intervalMs = registry.workingIndicator?.intervalMs ?? DEFAULT_WORKING_INTERVAL
+    ticker = setInterval(() => {
+      if (disposed) return
+      if (getState().turnActive !== true) return
+      working.setFrame(working.frame + 1)
+      tui.requestRender()
+    }, Math.max(16, intervalMs))
+    ticker.unref?.()
+  }
+
+  // 一切界面变更都通过 registry 通知；订阅后重建受影响的部分。
   const unsubscribe = registry.subscribe(() => {
+    if (disposed) return
     headerSlot.clear()
     const header = registry.header
     if (header !== undefined && header !== null) headerSlot.addChild(header)
     rebuildWidgets(aboveWidgets, registry.widgetList(WidgetPlacement.ABOVE_EDITOR))
     rebuildWidgets(belowWidgets, registry.widgetList(WidgetPlacement.BELOW_EDITOR))
+    rebuildEditor()
+    rebuildFooter()
+    restartTicker()
     chat.invalidate()
-    footer.invalidate()
+    working.invalidate()
     tui.requestRender()
   })
+
+  rebuildEditor()
+  rebuildFooter()
+  restartTicker()
 
   root.addChild(headerSlot)
   root.addChild(chat)
   root.addChild(working)
   root.addChild(aboveWidgets)
-  root.addChild(editor)
+  root.addChild(editorSlot)
   root.addChild(belowWidgets)
-  root.addChild(footer)
+  root.addChild(footerSlot)
 
   tui.addChild(root)
   tui.setFocus(editor)
-
-  editor.onSubmit = (text) => {
-    const trimmed = String(text ?? '').trim()
-    if (trimmed === '') return
-    editor.setText('')
-    onSubmit(trimmed)
-  }
 
   // 输入监听：拦截应用级按键。
   tui.addInputListener((data) => {
@@ -265,39 +349,40 @@ export function createApp(options) {
     return undefined
   })
 
-  // 工作动画：只在回合进行中走动，空闲时不产生任何重绘。
-  const intervalMs = registry.workingIndicator?.intervalMs ?? DEFAULT_WORKING_INTERVAL
-  const ticker = setInterval(() => {
-    if (getState().turnActive !== true) return
-    working.setFrame(working.frame + 1)
-    tui.requestRender()
-  }, intervalMs)
-  ticker.unref?.()
-
   return {
     tui,
-    editor,
+    get editor() {
+      return editor
+    },
     /** 重新渲染（模型更新后由 kernel 层调用）。 */
     requestRender: () => {
+      if (disposed) return
       chat.invalidate()
-      footer.invalidate()
+      working.invalidate()
+      footer?.invalidate?.()
       tui.requestRender()
     },
     /** 在编辑器里放一段文本（语音输入、外部注入等用）。 */
     setEditorText: (text) => {
-      editor.setText(text)
+      if (disposed) return
+      editor?.setText?.(text)
       tui.requestRender()
     },
     /** 往对话区插一条本地提示（不进 session）。 */
     notice: (text) => {
+      if (disposed) return
       view.rows.push({ key: `notice-${view.rows.length + 1}`, role: 'notice', text, done: true })
+      // 与 projection.js 的 touch() 保持一致：任何结构变化都要推进 revision，
+      // 否则组件的 (width, revision) 缓存会拿到陈旧的一帧。
       view.revision += 1
       chat.invalidate()
       tui.requestRender()
     },
     start: () => tui.start(),
     dispose: () => {
-      clearInterval(ticker)
+      if (disposed) return
+      disposed = true
+      if (ticker !== undefined) clearInterval(ticker)
       unsubscribe()
       try {
         tui.stop()

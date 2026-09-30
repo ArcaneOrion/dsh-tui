@@ -61,6 +61,26 @@ export async function apply(ctx) {
 
   // ── 内核桥 ────────────────────────────────────────────────────────────
 
+  /**
+   * agent 状态 → 视图的回合标记。
+   *
+   * `agent/status` 是「现在到底有没有回合在跑」的唯一权威来源。只靠
+   * turn/start 与 turn/end 推断是有洞的：日志可能停在 turn/start（上次进程
+   * 崩在回合中间），于是 turnActive 永远为 true —— spinner 一直转，
+   * 而且 Ctrl+C 永远只会走「中断」分支，退不出程序。
+   */
+  const onEvent = (event) => {
+    if (event?.type !== 'status') return
+    const status = event.payload?.status
+    if (status === undefined) return
+    const active = status === 'running'
+    if (view.turnActive !== active) {
+      view.turnActive = active
+      view.revision += 1
+      app?.requestRender()
+    }
+  }
+
   let kernel
   try {
     kernel = await createKernel({
@@ -68,6 +88,7 @@ export async function apply(ctx) {
       view,
       startup,
       onUpdate: () => app?.requestRender(),
+      onEvent,
     })
   } catch (error) {
     disposeDefaultRenderers()
@@ -78,15 +99,17 @@ export async function apply(ctx) {
 
   let exiting = false
 
-  async function shutdown(code = 0) {
-    if (exiting) return
-    exiting = true
-    try {
-      // 顺序很重要：先把会话刷进存储，再拆界面，最后销毁 agent。
-      // 反过来会丢掉最后一段对话。
-      await kernel.flush()
-    } catch {
-      // 已在上层吞掉细节；这里只保证继续往下走。
+  /**
+   * 退出清理，幂等。shutdown 与 ctx.effect 都走这里。
+   * 顺序很重要：先把会话刷进存储，再拆界面，最后销毁 agent——反过来会丢最后一段对话。
+   */
+  async function teardown({ flush = true } = {}) {
+    if (flush) {
+      try {
+        await kernel.flush()
+      } catch {
+        // 刷盘失败不能阻止退出。
+      }
     }
     try {
       app?.dispose()
@@ -99,43 +122,60 @@ export async function apply(ctx) {
       // 同上。
     }
     disposeDefaultRenderers()
+  }
 
+  async function shutdown(code = 0) {
+    if (exiting) return
+    exiting = true
+    await teardown({ flush: true })
     const exit = ctx.get('appExit')
     if (typeof exit === 'function') exit(code)
     else process.exit(code)
   }
 
-  app = createApp({
-    view,
-    theme,
-    registry,
-    onSubmit: (text) => {
-      kernel.submit(text)
-    },
-    onInterrupt: () => {
-      kernel.interrupt()
-    },
-    onExit: () => {
-      void shutdown(0)
-    },
-    getInfo: () => ({
-      model: [kernel.selection.provider, kernel.selection.model].filter(Boolean).join('/') || undefined,
-      session: kernel.sessionId.slice(0, 8),
-      mode: 'dsh-tui',
-    }),
-    getState: () => ({
-      turnActive: view.turnActive === true,
-      statusText: view.turnActive === true ? 'working' : undefined,
-    }),
-  })
+  const modelLabel =
+    kernel.selection === undefined ? '' : [kernel.selection.provider, kernel.selection.model].filter(Boolean).join('/')
 
-  // ── 启动后：状态栏 + 初始提示词 ────────────────────────────────────────
+  // createApp 会构造真实的终端对象（ProcessTerminal / Editor），这一步可能抛。
+  // 抛了就必须把已经建起来的 agent 与监听全部回收，否则每失败一次泄漏一个会话。
+  try {
+    app = createApp({
+      view,
+      theme,
+      registry,
+      onSubmit: (text) => {
+        kernel.submit(text)
+      },
+      onInterrupt: () => {
+        kernel.interrupt()
+      },
+      onExit: () => {
+        void shutdown(0)
+      },
+      getInfo: () => ({
+        model: modelLabel === '' ? undefined : modelLabel,
+        session: kernel.sessionId.slice(0, 8),
+        mode: 'dsh-tui',
+      }),
+      getState: () => ({
+        turnActive: view.turnActive === true,
+        statusText: view.turnActive === true ? 'working' : undefined,
+      }),
+    })
+  } catch (error) {
+    await teardown({ flush: true })
+    throw new Error(`dsh-tui: failed to mount the terminal UI — ${error?.message ?? error}`)
+  }
 
-  const modelLabel = [kernel.selection.provider, kernel.selection.model].filter(Boolean).join('/')
   registry.setStatus('session', theme.fg('dim', kernel.sessionId.slice(0, 8)))
   if (modelLabel !== '') registry.setStatus('model', theme.fg('accent', modelLabel))
 
-  app.start()
+  try {
+    app.start()
+  } catch (error) {
+    await teardown({ flush: true })
+    throw new Error(`dsh-tui: failed to start the terminal UI — ${error?.message ?? error}`)
+  }
 
   if (typeof startup.prompt === 'string' && startup.prompt.trim() !== '') {
     kernel.submit(startup.prompt)
@@ -143,17 +183,34 @@ export async function apply(ctx) {
 
   // ── 生命周期 ──────────────────────────────────────────────────────────
   //
-  // 插件卸载 / profile 重组时必须还原终端（alt-screen、raw mode、光标）。
-  // 否则用户会拿到一个坏掉的终端，得手动敲 reset。
-  ctx.effect(() => () => {
-    if (exiting) return
+  // 插件卸载 / profile 重组时必须还原终端（alt-screen、raw mode、光标），
+  // 并且**先把会话刷进存储**——否则最后一段对话会丢。
+
+  // 信号兜底：关掉终端窗口（SIGHUP）、raw mode 之外的 SIGINT、SIGTERM 都会
+  // 绕过正常退出路径直接杀死进程，留下一个坏掉的终端。
+  const onSignal = () => {
+    void shutdown(130)
+  }
+  const signals = ['SIGHUP', 'SIGINT', 'SIGTERM']
+  for (const signal of signals) process.on(signal, onSignal)
+
+  // 进程真要退时至少把终端还原。这里不能 await，只能同步尽力而为。
+  const onProcessExit = () => {
     try {
       app?.dispose()
     } catch {
-      // 忽略
+      // 尽力而为。
     }
-    void kernel.dispose()
-    disposeDefaultRenderers()
+  }
+  process.on('exit', onProcessExit)
+
+  ctx.effect(() => () => {
+    for (const signal of signals) process.off(signal, onSignal)
+    process.off('exit', onProcessExit)
+    if (!exiting) {
+      exiting = true
+      void teardown({ flush: true })
+    }
   })
 
   ctx.get('logger')?.info?.(`dsh-tui: mounted session ${kernel.sessionId} (${modelLabel || 'default model'})`)

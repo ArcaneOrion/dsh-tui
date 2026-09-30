@@ -167,3 +167,57 @@ test('所有输出路径都满足宽度约束', () => {
   chat.invalidate()
   assertWithinWidth(chat.render(120), 120, '宽终端')
 })
+
+// ── 性能回归：流式期间不能全量重建历史 ───────────────────────────────────
+
+test('行级缓存：流式推进 revision 时，已提交的历史行不会被重新渲染', () => {
+  const { registry } = makeRegistry()
+  let calls = 0
+  for (const role of ['user', 'notice']) {
+    registry.setMessageRenderer(role, ({ row }) => {
+      calls += 1
+      return { render: () => [row.text] }
+    })
+  }
+
+  const view = createView()
+  view.rows.push({ key: 'a', role: 'user', text: 'A', rev: 0, done: true })
+  view.rows.push({ key: 'b', role: 'notice', text: 'B', rev: 0, done: true })
+  const chat = new ChatView({ view, theme, registry })
+
+  chat.render(WIDTH)
+  assert.equal(calls, 2, '首次渲染两行')
+
+  // 模拟一个流式 token：revision 推进了，但已提交的行没变。
+  // 修复前这里会把两行历史全部重建一遍（行多了就是每个 token 一次全量重渲染）。
+  view.revision += 1
+  chat.render(WIDTH)
+  assert.equal(calls, 2, '帧缓存失效后，历史行应命中行级缓存而不是重建')
+
+  // 只有被改动的那一行该重画。
+  view.rows[0].text = 'A2'
+  view.rows[0].rev += 1
+  view.revision += 1
+  const out = chat.render(WIDTH).join('\n')
+  assert.equal(calls, 3, '只有变化的那一行应被重渲染')
+  assert.ok(out.includes('A2'))
+})
+
+test('invalidate() 会清掉行级缓存（换主题后必须全部重画）', () => {
+  const { registry } = makeRegistry()
+  let calls = 0
+  registry.setMessageRenderer('user', ({ row }) => {
+    calls += 1
+    return { render: () => [row.text] }
+  })
+  const view = createView()
+  view.rows.push({ key: 'a', role: 'user', text: 'A', rev: 0, done: true })
+  const chat = new ChatView({ view, theme, registry })
+
+  chat.render(WIDTH)
+  assert.equal(calls, 1)
+  chat.invalidate()
+  view.revision += 1
+  chat.render(WIDTH)
+  assert.equal(calls, 2, '显式 invalidate 之后必须重画，否则换主题不生效')
+})

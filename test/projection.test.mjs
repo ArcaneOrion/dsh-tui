@@ -213,3 +213,26 @@ test('【核心不变量】回放与实时得到完全相同的行', () => {
   assert.equal(live.turnActive, false)
   assert.equal(replayed.turnActive, false)
 })
+
+// ── 修复项的回归测试 ─────────────────────────────────────────────────────
+
+test('replay 把 turnActive 归零：历史不代表现在有回合在跑', () => {
+  // 日志可能停在 turn/start（上次进程崩在回合中间）。如果 replay 不归零，
+  // resume 之后 spinner 会一直转，Ctrl+C 也永远退不出程序。
+  const view = replay(createView(), [{ seq: 1, type: 'turn/start', data: { turn: 1 } }])
+  assert.equal(view.turnActive, false)
+})
+
+test('行有 rev 版本号，被原地更新时自增（渲染层行缓存的依据）', () => {
+  const view = createView()
+  applySessionEvent(view, { seq: 1, type: 'tool/call', data: { callId: 'c1', name: 'bash', arguments: '{}' } })
+  assert.equal(view.rows[0].rev, 0, '新插入的行 rev 从 0 开始')
+
+  applySessionEvent(view, {
+    seq: 2,
+    type: 'tool/result',
+    data: { message: { toolCallId: 'c1', content: [textBlock('out')] } },
+  })
+  assert.equal(view.rows.length, 1)
+  assert.equal(view.rows[0].rev, 1, '原地更新必须推进 rev，否则渲染层会一直用缓存')
+})

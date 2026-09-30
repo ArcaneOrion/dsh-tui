@@ -74,9 +74,12 @@ function touch(view) {
 }
 
 function pushRow(view, row) {
-  view.rows.push(row)
+  // `rev` 是行级版本号：行内容原地更新时自增，供渲染层做行级缓存。
+  // 没有它，流式期间每个 token 都要把全部历史行重建一遍。
+  const stored = { rev: 0, ...row }
+  view.rows.push(stored)
   touch(view)
-  return row
+  return stored
 }
 
 /**
@@ -179,6 +182,7 @@ export function applySessionEvent(view, event) {
         row.done = true
         row.isError = isError
         row.errorReason = data?.error?.reason
+        row.rev = (row.rev ?? 0) + 1
         touch(view)
         return true
       }
@@ -289,5 +293,9 @@ function flushStreaming(view) {
 export function replay(view = createView(), events) {
   for (const event of events) applySessionEvent(view, event)
   view.streaming = null
+  // 回放的是**历史**：日志末尾即使停在 turn/start（上次进程崩过），也不代表
+  // 现在有回合在跑。实时性由 agent 状态决定，不由历史决定——否则 resume 之后
+  // turnActive 永远为 true，spinner 常转，Ctrl+C 也永远只会去「中断」而退不出。
+  view.turnActive = false
   return view
 }

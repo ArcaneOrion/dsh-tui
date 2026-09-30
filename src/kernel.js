@@ -20,6 +20,11 @@ import { applySessionEvent, applyStreamFrame, replay } from './projection.js'
 /**
  * 决定本次会话的模型路由。
  * 优先 `--model provider/model`，否则用内核的中立默认（ctx.agentDefaultModel）。
+ *
+ * @returns {{provider:string,model:string}|undefined} 拿不到可用选择时返回
+ *   `undefined`，**不是** `{provider:undefined,model:undefined}`。后者是一个
+ *   「字段齐全但值为 undefined」的假对象，交给 `installModelSelection` 会被
+ *   当成一次真实选择，从而把 undefined 当模型名去发请求。
  */
 export function resolveSelection(ctx, startup) {
   const override = startup?.model
@@ -30,13 +35,11 @@ export function resolveSelection(ctx, startup) {
     if (provider !== '' && model !== '') return { provider, model }
   }
 
-  const defaultModel = ctx.get('agentDefaultModel')
-  const current = defaultModel?.currentSelection?.()
-  if (current !== undefined && current !== null) {
+  const current = ctx.get('agentDefaultModel')?.currentSelection?.()
+  if (typeof current?.provider === 'string' && typeof current?.model === 'string') {
     return { provider: current.provider, model: current.model }
   }
-  // 内核没有默认模型时不编造：交给 adapter 自己报错，错误信息比我们的猜测准确。
-  return { provider: undefined, model: undefined }
+  return undefined
 }
 
 /**
@@ -57,8 +60,13 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   let agent
 
   const selection = resolveSelection(ctx, startup)
+  // 拿不到选择时**整个省略** agentOptions，而不是塞一个字段为 undefined 的对象：
+  // 后者会被 adapter 当作一次显式路由，拿 undefined 当模型名去发请求。
+  const agentOptions = selection === undefined ? {} : { provider: selection.provider, model: selection.model }
+
   const setup = (agentCtx) => {
     // 把选定的模型路由耦合到该 agent 的装配与请求路由上。
+    // `current: undefined` 是合法语义，表示「本会话不覆盖路由」。
     installModelSelection(agentCtx, { current: selection, assembled: undefined })
   }
 
@@ -76,7 +84,7 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   if (resuming) {
     handle = await ctx.agents.resume({
       resumeSessionId: SessionId(startup.resume),
-      agentOptions: { provider: selection.provider, model: selection.model },
+      agentOptions,
       setup,
     })
   } else {
@@ -84,7 +92,7 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     handle = await ctx.agents.create({
       sessionId,
       meta: { cwd: process.cwd() },
-      agentOptions: { provider: selection.provider, model: selection.model },
+      agentOptions,
       setup,
     })
   }
@@ -145,11 +153,14 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     )
   }
 
-  /** 请求中断当前回合。排队中的工作一并丢弃（默认行为）。 */
+  /** 请求中断当前回合。 */
   function interrupt() {
     if (agent === undefined) return
     try {
-      agent.cancel({ kind: 'user' })
+      // keepInbox：只中止当前回合，**保留**用户已排在后面的消息。
+      // 默认行为会把排队中的后续输入一并丢弃——用户按 Esc 想的是「这次别说了」，
+      // 不是「顺便把我刚打的第二句也删了」。
+      agent.cancel({ kind: 'user' }, { keepInbox: true })
     } catch {
       // agent 可能刚好已经空闲/被销毁；中断失败不需要惊动用户。
     }
