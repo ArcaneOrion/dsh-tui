@@ -129,14 +129,42 @@ export function parseArgs(argv) {
 }
 
 /**
+ * 从上下文里取本次调用的参数快照。
+ *
+ * **注意**：`ctx.cmdlineArgs` 是一个**服务对象**，不是数组。
+ * dsh-cmdline 的契约是「`get()` 是它的全部接口，返回参数快照」。
+ * 直接把它当数组用会得到一个对象（`JSON.stringify` 回 `{}`），
+ * 于是所有旗标被静默丢弃——不报错，只是全部失效。
+ *
+ * @param {object} ctx
+ * @returns {readonly string[]}
+ */
+export function readCmdlineArgs(ctx) {
+  const service = ctx?.get?.('cmdlineArgs')
+  if (service === undefined || service === null) return []
+  if (typeof service.get === 'function') return service.get() ?? []
+  // 兼容「直接给数组」的实现，避免将来 dsh 简化这一层时又炸一次。
+  return Array.isArray(service) ? service : []
+}
+
+/**
  * 解析命令行并发布启动参数。
  *
- * `--help` 与用法错误都不发布服务——那样入口插件就不会挂载，终端保持干净。
+ * `--help` 不发布服务——那样入口插件就不会挂载，终端保持干净。
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx - 携带 cmdlineArgs 的插件上下文
  */
 export function apply(ctx) {
-  const parsed = parseArgs(ctx.get('cmdlineArgs'))
+  const rawArgs = readCmdlineArgs(ctx)
+
+  // DSH_TUI_DEBUG_ARGS=1 时把 launcher 交过来的原始参数打到 stderr。
+  // 排查「旗标到底有没有从 dsh launcher 到我们手里」时非常有用——这一层
+  // 有好几个可能吃掉参数的地方（包装脚本、launcher、服务对象本身）。
+  if (process.env.DSH_TUI_DEBUG_ARGS === '1') {
+    process.stderr.write(`dsh-tui: cmdlineArgs = ${JSON.stringify(rawArgs)}\n`)
+  }
+
+  const parsed = parseArgs(rawArgs)
 
   const exit = ctx.get('appExit')
   const quit = (code) => {

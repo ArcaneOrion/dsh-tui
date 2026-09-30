@@ -98,10 +98,25 @@ test('startup 导出正确的插件形态，且不 import 任何外部包', () =
   assert.match(startup.HELP_TEXT, /--resume/)
 })
 
+test('readCmdlineArgs：ctx.cmdlineArgs 是**服务对象**，必须调 get()', () => {
+  // 这条是真事故的回归测试。`ctx.cmdlineArgs` 不是数组，而是一个服务，
+  // 契约是「get() 是它的全部接口」。把它当数组用会静默拿到一个对象，
+  // 于是 --resume / --model / 初始提示词全部失效，而且**不报任何错**。
+  const service = { get: () => ['--resume', 'abc'] }
+  assert.deepEqual(startup.readCmdlineArgs({ get: () => service }), ['--resume', 'abc'])
+})
+
+test('readCmdlineArgs：兼容「直接给数组」的实现，并在缺失时返回空数组', () => {
+  assert.deepEqual(startup.readCmdlineArgs({ get: () => ['x'] }), ['x'])
+  assert.deepEqual(startup.readCmdlineArgs({ get: () => undefined }), [])
+  assert.deepEqual(startup.readCmdlineArgs(undefined), [])
+})
+
 test('startup.apply 在解析成功后发布服务', () => {
   const provided = []
   const ctx = {
-    get: (name) => (name === 'cmdlineArgs' ? ['hello', 'world'] : undefined),
+    // 用真实的服务形态，而不是数组——否则测试会掩盖上面那个事故。
+    get: (name) => (name === 'cmdlineArgs' ? { get: () => ['hello', 'world'] } : undefined),
     provide: (name, value) => provided.push([name, value]),
   }
   startup.apply(ctx)
