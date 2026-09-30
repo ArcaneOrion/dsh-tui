@@ -19,7 +19,7 @@
  *    直接把容器交给 overlay，键盘会石沉大海——必须转发给内部的列表/编辑器。
  */
 
-import { Box, Container, Editor, SelectList, Spacer, Text, fuzzyFilter } from '@earendil-works/pi-tui'
+import { Box, Container, Editor, SelectList, Spacer, Text, fuzzyFilter, truncateToWidth } from '@earendil-works/pi-tui'
 
 /** 默认的按键提示。 */
 const CHOOSE_HINT = '↑↓ 选择 · 输入即搜索 · Backspace 退格 · Enter 确认 · Esc 取消'
@@ -37,36 +37,46 @@ const TEXT_HINT = 'Enter 提交 · Esc 取消'
  * @param {number} spec.maxVisible
  * @param {(item: {value:string,label:string,description?:string}|undefined) => void} spec.onPick
  */
-function searchableList({ options, maxVisible, onPick }) {
-  const filterLine = new Text('', 0, 0)
+function searchableList({ theme, options, maxVisible, onPick }) {
   let query = ''
-  /** @type {SelectList} */
-  let list
+
+  function computeFiltered() {
+    if (query === '') return options
+    let filtered = fuzzyFilter(options, query, (item) => `${item.value} ${item.label}`)
+    if (filtered.length === 0) {
+      // 子序列太严（比如按中文渠道名搜）时退回子串匹配；再不行才真空。
+      const lower = query.toLowerCase()
+      filtered = options.filter(
+        (item) => item.value.toLowerCase().includes(lower) || String(item.label).toLowerCase().includes(lower),
+      )
+    }
+    return filtered
+  }
+
+  /**
+   * 只建一次实例。mount 挂进外框的就是它——过滤时**原地**更新 items /
+   * filteredItems / selectedIndex（SelectList 的公开字段）。
+   * 每次重建实例是上一版的 bug：挂在外框里的永远是旧实例，输入过滤毫无效果。
+   */
+  const list = new SelectList(options, Math.max(1, Math.min(options.length, maxVisible)), theme_selectList)
+  list.onSelect = (item) => onPick(item)
+  list.onCancel = () => onPick(undefined)
+
+  /** 过滤行：无状态的闭包组件，每次 render 现算，绕开 Text 的缓存。 */
+  const filterLine = {
+    render(width) {
+      if (query === '') return []
+      return [truncateToWidth(theme.fg('accent', `搜索: ${query}_`), width)]
+    },
+    invalidate() {},
+  }
 
   function applyFilter() {
-    let filtered
-    if (query === '') {
-      filtered = options
-    } else {
-      filtered = fuzzyFilter(options, query, (item) => `${item.value} ${item.label}`)
-      if (filtered.length === 0) {
-        // 子序列太严（比如按中文渠道名搜）时退回子串匹配；再不行才真空。
-        const lower = query.toLowerCase()
-        filtered = options.filter(
-          (item) => item.value.toLowerCase().includes(lower) || String(item.label).toLowerCase().includes(lower),
-        )
-      }
-    }
-    list = new SelectList(filtered, Math.max(1, Math.min(filtered.length, maxVisible)), theme_selectList)
-    list.onSelect = (item) => onPick(item)
-    list.onCancel = () => onPick(undefined)
+    const filtered = computeFiltered()
+    list.items = filtered
+    list.filteredItems = [...filtered]
+    list.selectedIndex = 0
   }
-
-  function updateFilterLine() {
-    filterLine.text = query === '' ? '' : theme.fg('accent', `搜索: ${query}_`)
-  }
-
-  applyFilter()
 
   return {
     /** 把过滤行与列表挂进外框，返回接收焦点的列表。 */
@@ -80,13 +90,11 @@ function searchableList({ options, maxVisible, onPick }) {
       if (data.length === 1 && data >= ' ' && data !== '\x7f') {
         query += data
         applyFilter()
-        updateFilterLine()
         return
       }
       if (data === '\x7f' || data === '\b') {
         query = query.slice(0, -1)
         applyFilter()
-        updateFilterLine()
         return
       }
       list.handleInput(data)
@@ -212,6 +220,7 @@ export function createPrompter({ tui, theme }) {
     return open(
       (finish) => {
         const picker = searchableList({
+          theme,
           options,
           maxVisible,
           onPick: (item) => finish(item === undefined ? undefined : item.value),
@@ -228,7 +237,13 @@ export function createPrompter({ tui, theme }) {
           container,
           (data) => picker.handleInput(data),
           tui,
-          () => finish(undefined),
+          (error) => {
+            // 静默吞错会让弹窗无声消失，用户以为输入坏了。诊断开关下先留证据。
+            if (process.env.DSH_TUI_DEBUG_PROMPT === '1') {
+              process.stderr.write(`dsh-tui[prompt] choose error: ${error?.stack ?? error}\n`)
+            }
+            finish(undefined)
+          },
         )
       },
       // 底部居中：贴着输入框上方弹出，视线不用跳到屏幕中央。
