@@ -225,7 +225,6 @@ export async function apply(ctx) {
   let presetLabel = kernel.preset ?? ''
   let modelCatalog
   let modelCatalogPromise
-  let runtimeModelLabel = modelLabel
 
   async function getModelCatalog() {
     if (modelCatalog !== undefined) return modelCatalog
@@ -264,11 +263,10 @@ export async function apply(ctx) {
     }
     try {
       const selected = await kernel.selectModel({ provider, model, reasoningEffort })
-      runtimeModelLabel = `${selected.provider}/${selected.model}`
-      modelLabel = runtimeModelLabel
-      prefs.write({ model: runtimeModelLabel })
+      modelLabel = `${selected.provider}/${selected.model}`
+      prefs.write({ model: modelLabel })
       app?.notice?.(
-        `已切换模型：${runtimeModelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}` +
+        `已切换模型：${modelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}` +
           `\n下一步请求生效，当前正在运行的请求不变。${selected.defaultSaved === false ? `\n（注意：默认值保存失败，重开后会回到原默认——${prefs.file}）` : ''}`,
       )
       app?.requestRender?.()
@@ -380,10 +378,9 @@ export async function apply(ctx) {
         }
         try {
           const selected = await kernel.selectModel(requested)
-          runtimeModelLabel = `${selected.provider}/${selected.model}`
-          modelLabel = runtimeModelLabel
-          const result = prefs.write({ model: runtimeModelLabel })
-          app?.notice?.(`已切换模型：${runtimeModelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}\n下一步请求生效。${result.ok ? '默认值也已保存。' : `默认值保存失败：${prefs.file}`}`)
+          modelLabel = `${selected.provider}/${selected.model}`
+          const result = prefs.write({ model: modelLabel })
+          app?.notice?.(`已切换模型：${modelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}\n下一步请求生效。${result.ok ? '默认值也已保存。' : `默认值保存失败：${prefs.file}`}`)
           app?.requestRender?.()
         } catch (error) {
           app?.notice?.(`模型切换失败：${error?.message ?? error}`)
