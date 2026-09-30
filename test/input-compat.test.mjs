@@ -22,43 +22,44 @@ import { createEnterCompat, enterCompatFromEnv } from '../src/input-compat.js'
 
 // ── 翻译器 ───────────────────────────────────────────────────────────────
 
-test('LF 在没见过 CR 之前被翻译成 CR（让 LF 终端的回车能用）', () => {
+test('LF 默认被翻译成 CR（LF 终端的回车必须能用）', () => {
   const translate = createEnterCompat()
   assert.equal(translate('\n'), '\r')
 })
 
-test('见过 CR 之后，LF 保持原样（保留 Ctrl+J 换行的语义）', () => {
+test('【回归】见过 CR 之后，LF 仍然要翻译（第一版的自动判定就错在这）', () => {
+  // 第一版：见过 CR 就认为该终端用 CR 提交，此后不再翻译 LF。
+  // 实测里 CR 先出现一次就把开关置真，后面真正的 LF 再也不翻译——等于没修。
   const translate = createEnterCompat()
   assert.equal(translate('\r'), '\r')
-  assert.equal(translate('\n'), '\n', 'CR 终端下 Ctrl+J 必须仍然是换行')
+  assert.equal(translate('\n'), '\r', 'LF 与 Ctrl+J 无法区分，不能靠历史猜')
 })
 
-test('force=true 时无条件把 LF 翻成 CR', () => {
-  const translate = createEnterCompat({ force: true })
-  translate('\r')
-  assert.equal(translate('\n'), '\r')
-})
-
-test('force=false 时完全不干预', () => {
+test('force=false 时完全不干预（保留 Ctrl+J 换行）', () => {
   const translate = createEnterCompat({ force: false })
   assert.equal(translate('\n'), '\n')
   assert.equal(translate('\r'), '\r')
 })
 
+test('force=true 显式开启', () => {
+  const translate = createEnterCompat({ force: true })
+  assert.equal(translate('\n'), '\r')
+})
+
 test('普通字符与多字节序列原样通过', () => {
   const translate = createEnterCompat()
-  for (const input of ['a', '中', '\x1b', '\x1b[A', '\x1b[200~多\n行\x1b[201~', '']) {
+  for (const input of ['a', '中', '\x1b', '\x1b[A', '\x1b[200~多\n行\x1b[201~', '', '\r\n']) {
     assert.equal(translate(input), input, `${JSON.stringify(input)} 不该被改动`)
   }
 })
 
-test('不带参数构造也能用', () => {
-  assert.doesNotThrow(() => createEnterCompat())
+test('不带参数构造也能用（默认开启）', () => {
+  assert.equal(createEnterCompat()('\n'), '\r')
 })
 
-test('enterCompatFromEnv 解析覆盖开关', () => {
-  assert.equal(enterCompatFromEnv({}), undefined)
-  assert.equal(enterCompatFromEnv({ DSH_TUI_LF_SUBMITS: '' }), undefined)
+test('enterCompatFromEnv：默认开启，只有显式 0 才关', () => {
+  assert.equal(enterCompatFromEnv({}), true)
+  assert.equal(enterCompatFromEnv({ DSH_TUI_LF_SUBMITS: '' }), true)
   assert.equal(enterCompatFromEnv({ DSH_TUI_LF_SUBMITS: '1' }), true)
   assert.equal(enterCompatFromEnv({ DSH_TUI_LF_SUBMITS: '0' }), false)
 })
