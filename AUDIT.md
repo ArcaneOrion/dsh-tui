@@ -358,3 +358,36 @@ banner → `[Context]`/`[Skills]`/`[Commands]`/`[Plugins]`/`[Theme]` → 底栏�
 | OSC 133 shell 集成标记 | pi 用它做「跳到上一条命令」。收益小，且转义序列可能干扰宽度计算与虚拟化 |
 | 「有更新可用」提示框 | 它服务的是 pi 的更新检查功能；本 TUI 没有该功能，加一个没人调用的渲染器就是死代码 |
 | 底栏的 `⚙ <扩展名>` 段 | 机制已在（`registry.setStatus`），但没有插件往里写。dsh 侧没有对应物 |
+
+### 工具调用链路的真机验证（本轮）
+
+用 PTY 跑「用 bash 运行 echo hello-from-tool」，会话日志给出 ground truth：
+
+```
+turn/start → step/start → tool/call → tool/result → assistant/message → step/end → turn/end: completed
+```
+
+`tool/result` 内容里带着 `hello-from-tool`。**工具调用链路是通的。**
+
+### 审批弹窗：试了但没触发，原因是机制本身
+
+构造了一个「写工作区之外」的操作想逼出授权弹窗，结果**没有弹窗**。查会话日志：
+
+```
+permission/preset: workspace-write
+sandbox/mode:      workspace-write
+approval/policy:   ask          ← 策略确实是 ask
+```
+
+而那次 `/tmp/outside-workspace-probe.txt` 的写入**实际成功了**（`isError: false`，
+文件确实存在）。模型在回复里说「越界拒绝，也不需要审批」——那是它在描述预期，
+不是实际结果。
+
+**结论**：`workspace-write` 模式下 `/tmp` 是允许的，不需要升级，所以不弹审批。
+审批路径只在更窄的一组目标上触发（模型自己提到 `~` / `/etc` / `/root`）。
+
+**没有继续验证下去**：要触发就得往那些路径写东西，那是拿用户的系统当试验场，
+不该在没有明确要求时做。所以授权弹窗目前的状态是——**代码路径有单测覆盖
+（认领 / 交回链上 / 已取消不弹窗 / 多问题中途取消），但没有真机端到端过**。
+
+这一条明确记在这里，不假装验证过。
