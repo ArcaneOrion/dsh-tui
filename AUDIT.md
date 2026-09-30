@@ -40,3 +40,43 @@
 - `ctx.get('agentDefaultModel').currentSelection()` 的服务名与返回形状。
 - `installModelSelection` 在 `current` 为 `undefined` 时的行为。
 - `agent/status` 在回合边界上的实际发放时机（是否存在 idle 早于最后一个 `assistant/message` 的窗口）。
+
+---
+
+## 第 2 轮 · 首次真实装载
+
+**发现方式**：真终端跑 `dsh tui`，报
+`dsh-tui-startup (@arcaneorion/dsh-tui/startup): failed to import`，
+主插件随之永远 `pending (waiting for service: dshTuiStartup)`。
+
+**结论**：不是插件逻辑问题，是**模块解析模型**的问题。
+
+### 根因
+
+profile 用 `link:` 安装本插件，`node_modules/@arcaneorion/dsh-tui` 是一个**软链**。
+Node 默认把软链解析成真实路径，于是模块解析从
+`/home/arcaneorion/AI/AI-DSH/plugin/DSH-TUI/` 往上走，
+**永远走不到 `~/.dsh/profiles/node_modules/` 那个共享仓库**。
+
+（你现有的 `dsh-teaching-board` 之所以没事，是因为它从 npm 仓库安装，是物理位于
+profile `node_modules` 里的真实目录。）
+
+### 已修复
+
+| 问题 | 修复 |
+|---|---|
+| `startup.js` 找不到 `commander` / `@deepseek-ai/dsh-cmdline` | **改为零 import**：手写参数解析（`parseArgs` 是纯函数，14 条单测覆盖）。额外收益：内核边界从两个文件收缩到只剩 `kernel.js`；也少了两个依赖 |
+| `kernel.js` 找不到 `@deepseek-ai/dsh-agent` 等 | 三个内核包 + `@deepseek-ai/cordis` 声明为 **devDependencies**（peer 保留为契约，devDep 供 `link:` 安装解析） |
+| 非 TTY 下静默挂起，用户以为坏了 | 改为直接写 **stderr** 的明确诊断（不再走 logger） |
+| **认不出参数时 `exit(2)`** ← 安全缺陷 | 若本 bundle 被装进**别的宿主**的 profile（你之前就把旧 dsh-tui 留在 web profile 里），`cmdlineArgs` 是宿主的参数（如 `--no-open --port 3080`），识别失败就退出会**连宿主进程一起杀掉**。改为只警告、不退出、仍发布服务，由入口的身份判定决定挂不挂 |
+
+### 验证结果
+
+```
+dsh --profile tui --dump-config   → exit 0，0 条 skipping/incompatible
+dsh tui < /dev/null               → 0 条 failed to import / pending / did not activate
+                                    并输出明确诊断：
+                                    dsh-tui: not mounting — neither stdout nor stdin is a TTY.
+```
+
+测试从 51 增至 **76 个用例，全部通过、0 跳过**——修复依赖解析后，原先因缺 profile 环境而跳过的入口集成测试全部真跑。

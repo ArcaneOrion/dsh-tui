@@ -53,14 +53,27 @@ pi-tui 只把「底部一个屏高」维持为活视口，其余行推进终端�
 ## 开发
 
 ```sh
-pnpm install     # 只装 pi-tui；内核包是 peer，运行时由 profile 提供
-pnpm test        # 51 个用例（入口集成测试需要 profile 环境，本地会跳过并说明原因）
+pnpm install     # pi-tui + 内核包（devDependencies，供 link: 安装时解析）
+pnpm test        # 76 个用例，全部无需 TTY
 pnpm check       # 语法检查
 ```
 
 测试全部**无需 TTY**：pi-tui 的组件是 `render(width) → string[]` 的纯函数，所以宽度约束、缓存、错误边界、实现点可替换性都能钉死。真实终端里的观感仍需人验。
 
+### 为什么内核包是 devDependencies
+
+`kernel.js` 直接 `import '@deepseek-ai/dsh-agent'` 等。这些包**也是** peerDependencies（声明运行时契约）——但只写 peer 会踩一个坑：
+
+profile 用 `link:` 安装本插件时，`node_modules/@arcaneorion/dsh-tui` 是软链，Node 会把它解析成**真实路径**，模块解析因此从插件源码目录往上走，**走不到 `~/.dsh/profiles/node_modules/` 那个共享仓库**，于是 `ERR_MODULE_NOT_FOUND`。
+
+把同样的版本同时写进 devDependencies，`pnpm install` 就会把它们装进本目录，`link:` 安装也能解析。
+
 ## 状态
 
-**未完成**：尚未在真实 dsh profile 中挂载验证。
-`src/` 的九个文件、`cordis.patch.yml`、测试均已完成；缺的是「装进 profile → 真终端里跑起来」这一步。
+**已可运行**：profile `tui` 已建立，`dsh --profile tui --dump-config` 组合通过，`dsh tui` 在非 TTY 下会给出明确诊断（0 条 `failed to import` / `pending`）。
+
+**尚未验证**：真实交互式终端里的表现（挂载、打字、流式、退出还原）。这一步需要人来跑：
+
+```sh
+dsh tui
+```

@@ -37,9 +37,15 @@ export const inject = ['dshTuiStartup']
 export async function apply(ctx) {
   const mode = resolveHostMode()
   if (mode.mode !== HostMode.INTERACTIVE) {
-    // 静默降级：这个 profile 里装了本前端，但当前进程不是终端宿主
-    // （Web / GUI / 被管道采样）。碰 stdout 会把宿主搞坏，所以什么都不做。
-    ctx.get('logger')?.debug?.(`dsh-tui: not mounting (${mode.reason})`)
+    // 写 stderr 而不是 logger：这是**用户需要立刻看到**的诊断，不是内部调试
+    // 信息。否则 `dsh tui` 在管道下会静默挂起，看起来像坏了。
+    //
+    // 但**不主动退出**：本 bundle 可能被装进一个由别的宿主（Web/GUI）拥有的
+    // profile，那种情况下擅自退出会连宿主一起杀掉。降级 + 说明才是安全行为。
+    process.stderr.write(
+      `dsh-tui: not mounting — ${mode.reason}.\n` +
+        'dsh-tui: this profile is a terminal front door; run it from an interactive terminal.\n',
+    )
     return
   }
 

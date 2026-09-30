@@ -1,43 +1,154 @@
 /**
- * 入口集成测试（不碰 ~/.dsh，不需要真实 profile）。
+ * 入口与命令行测试（不碰 ~/.dsh，不需要真实 profile）。
  *
- * 用 mock ctx 验证入口的**安全行为**——这些行为恰恰是最不该靠人肉在真终端里
- * 试出来的：
- *
- *   1. 非 TTY 宿主必须什么都不做（不碰 stdout、不抢 stdin、不建 agent）
- *   2. 缺内核服务时必须抛一条能看懂的错，而不是静默半死不活
- *   3. 建 agent 失败时必须把已装的默认渲染器清理掉，不留脏状态
- *
- * 真实终端路径（真的挂 pi-tui、真的打字）无法在这里验证，需要人跑。
- *
- * 依赖说明：`src/index.js` 会连带加载 `src/kernel.js`，后者按设计只 import
- * `@deepseek-ai/*`（peer 依赖，运行时由 dsh profile 提供）。本地开发目录里没有
- * 这些包时整组跳过，并把原因打出来——避免「假装测过了」。
+ * 分两组：
+ * - `startup.js` 现在是**零 import** 的纯模块（手写参数解析，不依赖 commander），
+ *   所以它的测试总是运行。
+ * - `index.js` 连带加载 `kernel.js`，后者 import `@deepseek-ai/*`。这些是
+ *   peer/dev 依赖，全新克隆且未 `pnpm install` 时会解析不到，此时整组跳过并
+ *   打印原因——避免「假装测过了」。
  */
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-// `src/index.js` 连带加载 `src/kernel.js`（只 import `@deepseek-ai/*`），
-// `src/startup.js` 依赖 `commander` 与 `@deepseek-ai/dsh-cmdline`——这些都是
-// **peer / 运行时由 dsh profile 提供**的东西，本地开发目录里没有。
-//
-// 解析不到时整组跳过并打出原因，而不是把套件搞红或假装测过。
+import * as startup from '../src/startup.js'
+
 let entry
-let startupModule
 let skipReason = false
 try {
   entry = await import('../src/index.js')
-  startupModule = await import('../src/startup.js')
 } catch (error) {
-  skipReason = `内核/运行时依赖在本地不可解析（${String(error?.code ?? error?.message ?? error)}）——入口集成测试需要 dsh profile 环境`
+  skipReason = `内核依赖在本地不可解析（${String(error?.code ?? error?.message ?? error)}）——入口集成测试需要先 pnpm install`
 }
 
 /** 只在依赖齐备时注册的测试。 */
 const entryTest = (name, fn) => test(name, { skip: skipReason }, fn)
 
+// ── 命令行解析（纯函数，完整覆盖）────────────────────────────────────────
+
+test('parseArgs：单个词作为提示词', () => {
+  assert.deepEqual(startup.parseArgs(['run']), {
+    prompt: 'run',
+    resume: undefined,
+    model: undefined,
+    help: false,
+    error: undefined,
+  })
+})
+
+test('parseArgs：多个词用空格拼成提示词', () => {
+  assert.equal(startup.parseArgs(['run', 'the', 'tests']).prompt, 'run the tests')
+})
+
+test('parseArgs：--resume 与 -r 等价', () => {
+  assert.equal(startup.parseArgs(['--resume', 'abc']).resume, 'abc')
+  assert.equal(startup.parseArgs(['-r', 'abc']).resume, 'abc')
+})
+
+test('parseArgs：--model 与 -m 等价', () => {
+  assert.equal(startup.parseArgs(['--model', 'deepseek/flash']).model, 'deepseek/flash')
+  assert.equal(startup.parseArgs(['-m', 'deepseek/flash']).model, 'deepseek/flash')
+})
+
+test('parseArgs：支持 --key=value 形式', () => {
+  const parsed = startup.parseArgs(['--resume=abc', '--model=x/y'])
+  assert.equal(parsed.resume, 'abc')
+  assert.equal(parsed.model, 'x/y')
+})
+
+test('parseArgs：-- 之后一律当字面提示词，不再解析旗标', () => {
+  const parsed = startup.parseArgs(['--', '--resume', '不是旗标'])
+  assert.equal(parsed.error, undefined)
+  assert.equal(parsed.resume, undefined)
+  assert.equal(parsed.prompt, '--resume 不是旗标')
+})
+
+test('parseArgs：-h / --help 置 help 标志', () => {
+  assert.equal(startup.parseArgs(['-h']).help, true)
+  assert.equal(startup.parseArgs(['--help']).help, true)
+})
+
+test('parseArgs：旗标缺值报错而不是静默吞掉', () => {
+  const parsed = startup.parseArgs(['--resume'])
+  assert.match(parsed.error, /requires a value/)
+})
+
+test('parseArgs：未知旗标报错', () => {
+  assert.match(startup.parseArgs(['--nope']).error, /unknown option/)
+})
+
+test('parseArgs：空参数给出空提示词且无错误', () => {
+  const parsed = startup.parseArgs([])
+  assert.equal(parsed.prompt, '')
+  assert.equal(parsed.error, undefined)
+})
+
+test('parseArgs：非数组输入不抛错', () => {
+  assert.doesNotThrow(() => startup.parseArgs(undefined))
+  assert.equal(startup.parseArgs(undefined).prompt, '')
+})
+
+test('startup 导出正确的插件形态，且不 import 任何外部包', () => {
+  assert.equal(typeof startup.apply, 'function')
+  assert.equal(startup.name, 'dsh-tui-startup')
+  assert.deepEqual(startup.inject, ['cmdlineArgs'])
+  assert.equal(startup.DSH_TUI_STARTUP_SERVICE, 'dshTuiStartup')
+  assert.match(startup.HELP_TEXT, /terminal front door/i)
+  assert.match(startup.HELP_TEXT, /--resume/)
+})
+
+test('startup.apply 在解析成功后发布服务', () => {
+  const provided = []
+  const ctx = {
+    get: (name) => (name === 'cmdlineArgs' ? ['hello', 'world'] : undefined),
+    provide: (name, value) => provided.push([name, value]),
+  }
+  startup.apply(ctx)
+  assert.equal(provided.length, 1)
+  assert.equal(provided[0][0], 'dshTuiStartup')
+  assert.equal(provided[0][1].prompt, 'hello world')
+})
+
+test('startup.apply 在 --help 时不发布服务（入口随之不挂载）', () => {
+  const provided = []
+  const exits = []
+  const ctx = {
+    get: (name) => (name === 'cmdlineArgs' ? ['--help'] : name === 'appExit' ? (c) => exits.push(c) : undefined),
+    provide: (name, value) => provided.push([name, value]),
+  }
+  startup.apply(ctx)
+  assert.equal(provided.length, 0, '--help 不该让入口插件挂载')
+  assert.deepEqual(exits, [0])
+})
+
+test('startup.apply 遇到认不出的参数只警告，不退出也不阻止挂载', () => {
+  // 这是一条**安全约束**：本 bundle 可能被装进由别的宿主拥有的 profile
+  // （用户之前就把旧的 dsh-tui 留在 web profile 里）。那种情况下 cmdlineArgs
+  // 是宿主的参数（这里用 web 的 --no-open --port 3080 模拟），我们当然认不出来。
+  // 此时若用错误码退出，会把宿主进程一起杀掉。
+  const provided = []
+  const exits = []
+  const ctx = {
+    get: (name) =>
+      name === 'cmdlineArgs'
+        ? ['--no-open', '--port', '3080']
+        : name === 'appExit'
+          ? (code) => exits.push(code)
+          : undefined,
+    provide: (name, value) => provided.push([name, value]),
+  }
+  startup.apply(ctx)
+  assert.deepEqual(exits, [], '绝不能退出——宿主进程可能正跑在上面')
+  assert.equal(provided.length, 1, '仍应发布服务，由入口的身份判定决定挂不挂')
+})
+
+// ── 入口行为 ─────────────────────────────────────────────────────────────
+
 /** 造一个最小可用的 mock 上下文。 */
-function mockCtx({ tty = false, startup = { prompt: '', resume: undefined, model: undefined }, agents = undefined } = {}) {
+const OMIT = Symbol('omit')
+
+function mockCtx({ tty = false, startupValues = { prompt: '', resume: undefined, model: undefined }, agents = OMIT } = {}) {
   const calls = { provides: [], effects: [], listeners: [], logs: [] }
   const originalOut = process.stdout.isTTY
   const originalIn = process.stdin.isTTY
@@ -46,9 +157,11 @@ function mockCtx({ tty = false, startup = { prompt: '', resume: undefined, model
   Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true })
   Object.defineProperty(process.stdin, 'isTTY', { value: tty, configurable: true })
 
+  // 用 OMIT 哨兵表达「这个服务不提供」。不能传 undefined——那会触发上面的
+  // 默认参数，反而把服务提供了。
   const registry = new Map()
-  if (startup !== undefined) registry.set('dshTuiStartup', startup)
-  if (agents !== undefined) registry.set('agents', agents)
+  if (startupValues !== OMIT) registry.set('dshTuiStartup', startupValues)
+  if (agents !== OMIT) registry.set('agents', agents)
 
   const ctx = {
     get(name, fallback) {
@@ -61,6 +174,7 @@ function mockCtx({ tty = false, startup = { prompt: '', resume: undefined, model
     provide(name, value) {
       calls.provides.push([name, value])
       registry.set(name, value)
+      ctx[name] = value
     },
     effect(fn) {
       calls.effects.push(fn)
@@ -72,6 +186,10 @@ function mockCtx({ tty = false, startup = { prompt: '', resume: undefined, model
     },
   }
 
+  // 真实 Cordis 里服务同时以 `ctx.<name>` 属性暴露（kernel.js 用的就是这个），
+  // 只实现 ctx.get() 的 mock 保真度不够，会让测试通过但线上行为不同。
+  for (const [serviceName, value] of registry) ctx[serviceName] = value
+
   return {
     ctx,
     calls,
@@ -82,30 +200,10 @@ function mockCtx({ tty = false, startup = { prompt: '', resume: undefined, model
   }
 }
 
-// ── 插件形态 ─────────────────────────────────────────────────────────────
-
-entryTest('startup 导出命令行插件形态并声明 cmdlineArgs 依赖', () => {
-  assert.equal(typeof startupModule.apply, 'function')
-  assert.equal(startupModule.name, 'dsh-tui-startup')
-  assert.deepEqual(startupModule.inject, ['cmdlineArgs'])
-  assert.equal(startupModule.DSH_TUI_STARTUP_SERVICE, 'dshTuiStartup')
-})
-
-entryTest('startup 的命令定义能被构造且带 --help', () => {
-  const program = startupModule.dshTuiCommand()
-  assert.equal(typeof program.parse, 'function')
-  const help = program.helpInformation()
-  assert.match(help, /terminal front door/i)
-  assert.match(help, /--resume/)
-})
-
-// ── 入口行为 ─────────────────────────────────────────────────────────────
-
-entryTest('入口导出了 Cordis 插件需要的四件套', () => {
+entryTest('入口导出 Cordis 插件形态，代码级依赖保持最小', () => {
   assert.equal(typeof entry.apply, 'function')
   assert.equal(entry.name, 'dsh-tui')
-  assert.ok(Array.isArray(entry.inject), 'inject 必须是数组')
-  assert.deepEqual(entry.inject, ['dshTuiStartup'], '代码级依赖必须保持最小')
+  assert.deepEqual(entry.inject, ['dshTuiStartup'])
 })
 
 entryTest('非 TTY 宿主：静默返回，不建 agent、不注册任何东西', async () => {
@@ -130,7 +228,7 @@ entryTest('非 TTY 宿主：静默返回，不建 agent、不注册任何东西'
 })
 
 entryTest('缺少 ctx.agents 时抛出可读错误', async () => {
-  const h = mockCtx({ tty: true, agents: undefined })
+  const h = mockCtx({ tty: true, agents: OMIT })
   try {
     await assert.rejects(() => entry.apply(h.ctx), /ctx\.agents is unavailable/)
   } finally {
@@ -155,7 +253,7 @@ entryTest('建 agent 失败时把底层原因带出来', async () => {
 })
 
 entryTest('缺少 dshTuiStartup（例如 --help 路径）时什么都不做', async () => {
-  const h = mockCtx({ tty: true, startup: undefined })
+  const h = mockCtx({ tty: true, startupValues: OMIT })
   try {
     await entry.apply(h.ctx)
   } finally {
