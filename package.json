@@ -27,12 +27,14 @@
   "files": [
     "src",
     "bin",
+    "scripts",
     "cordis.patch.yml",
     "README.md",
     "AUDIT.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "audit": "node scripts/audit.mjs",
     "check": "node --check src/index.js && node --check src/app.js && node --check src/kernel.js && node --check src/projection.js && node --check src/registry.js && node --check src/messages.js && node --check src/theme.js && node --check src/host.js && node --check src/startup.js"
   },
   "dependencies": {
