@@ -22,6 +22,7 @@
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { DefaultFooter } from './footer.js'
 import { createEnterCompat, enterCompatFromEnv } from './input-compat.js'
+import { logKey, logTerminalState } from './keylog.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
 
@@ -378,6 +379,9 @@ export function createApp(options) {
   const translateInput = createEnterCompat({ force: enterCompatFromEnv() })
 
   tui.addInputListener((data) => {
+    // 诊断：记录 TUI 实际收到的字节（配合 stdin 通道对照，见 src/keylog.js）。
+    logKey('tui', data)
+
     // 先做字节翻译：把终端发来的 LF 归一成 CR（仅在判定需要时）。
     const translated = translateInput(data)
     if (translated !== data) return { data: translated }

@@ -20,6 +20,7 @@ import { createCommandAutocomplete, createCommandSystem, helpText, parseCommandL
 import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { installInteractive } from './interactive.js'
+import { logTerminalState, tapStdin } from './keylog.js'
 import { combineAutocomplete, createFileIndex, createMentionAutocomplete } from './mentions.js'
 import { createPrefs } from './prefs.js'
 import { collectStartupSections } from './startup-info.js'
@@ -371,11 +372,16 @@ export async function apply(ctx) {
   )
 
   try {
+    logTerminalState('before-start')
     app.start()
+    logTerminalState('after-start')
   } catch (error) {
     await teardown({ flush: true })
     throw new Error(`dsh-tui: failed to start the terminal UI — ${error?.message ?? error}`)
   }
+
+  // 独立于 TUI 的 stdin 旁观器，只在 DSH_TUI_LOG_KEYS 开启时生效。
+  const untapStdin = tapStdin()
 
   // 人机回环：不装这两个 waterfall，任何需要授权的工具都会 fail-closed，
   // 模型提问也会直接失败——那样这个 TUI 就只是个聊天框。
@@ -431,6 +437,7 @@ export async function apply(ctx) {
   ctx.effect(() => () => {
     for (const signal of signals) process.off(signal, onSignal)
     process.off('exit', onProcessExit)
+    untapStdin()
     if (!exiting) {
       exiting = true
       void teardown({ flush: true })
