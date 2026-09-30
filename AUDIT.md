@@ -172,59 +172,6 @@ P2 各项仍然成立（surface `replace` 语义、纯图片消息、assistant �
 
 ---
 
-## 第 6 轮 · 「回车没反应」的真正原因（端到端排查）
-
-**现象**：`dsh tui` 渲染完全正常，能打字，回车后**什么都没发生**，也没有任何报错。
-
-### 查到的事实（都有证据）
-
-用 `script -qec` 分配真 PTY 自己跑，并把按键字节、屏幕转储、会话日志三路对齐：
-
-```
-按键通道   init: isRaw=true              ← raw mode 正常
-           tui: "a" "b" "\r"             ← 输入确实到了 TUI
-提交链路   onSubmit 触发 → followup 调用 → turn/start → user/message ✓
-模型调用   assistant/attempt: AUTH 401    ← 失败在这一步
-           turn/end: {kind:'error', error:{code:'AUTH', status:401}}
-```
-
-**所以：回车一直是好的，消息也进了会话，是模型调用在失败**——
-`deepseek-official`（dsh-base 的默认 provider）在这台机器上 key 无效。
-而**投影层只认 `assistant/message`，把 `turn/end` 的错误整个丢掉了**，
-界面上只剩一个转完就停的 spinner。
-
-### 修掉的真 bug
-
-`MessageRole.ERROR` + 投影在 `turn/end.reason.kind === 'error'` 时落一行
-+ `formatFailure()` + 红色 `errorRenderer`。PTY 实测已可见：
-
-```
- ✗ AUTH 401: Authentication Fails, Your api key: ****aac4 is invalid
-```
-
-### 排查路上的三个自身错误（都值得记）
-
-| 错误 | 后果 |
-|---|---|
-| 第一版回车兼容写成「见过 CR 就不再翻译 LF」 | CR 先出现一次就把开关置真，真正的 LF 再也不翻译——**等于没修**。LF 与 Ctrl+J 无法区分，不能靠历史猜 |
-| 用 `zlib.zstdDecompressSync` 读会话日志 | 它**只解第一帧**，于是我以为「会话里只有 1 个事件、消息没进会话」，结论完全跑偏。用 `zstd -dc` 才解出全部 20~36 个事件 |
-| 说「没有 TTY 所以测不了」 | 错的。`script -qec` 就能分配真 PTY。**这个项目从一开始就能被我自己端到端测试** |
-
-### 关于「共享 bundle」方案的结论（有实测反例）
-
-原本想把 provider 配置抽成共享 bundle。**实测证明这个方案对本插件行不通**：
-
-1. `dsh-settings` 把改动持久化到**当前 profile 的补丁层**；
-2. 补丁语义是**整体替换 `config`，绝不深合并**；
-3. 于是插件写一次 `health`，profile 层就出现一份**只有 health 的残缺 config**，
-   把 bundle 里的 `groups` 整个盖掉——实测当场复现（`groups 数量: 0`）。
-
-**要做到一份真相**，得把模型定义从「行配置」搬到 `storageDomain`
-（`~/.dsh/storages/`，**跨 profile 共享**）——该插件已经用它存健康数据，
-把 `groups` 一并搬过去即可。那需要改插件本身。
-
----
-
 ## 第 5 轮 · 「回车提交不了」的第一次误判
 
 **（保留原样，因为它记录了两个错误结论是怎么产生的——它们本身是教训。）**
@@ -288,3 +235,58 @@ pi-tui 的 Editor 里**「换行」分支排在「提交」分支前面**，而 
 - 当症状是「什么都没发生」时，最有价值的动作不是继续读代码，而是
   **构造一个能绕开环境限制的最小复现**。这次是把 `Editor` 单独实例化喂字节，
   一次就定位了。
+
+---
+
+## 第 6 轮 · 「回车没反应」的真正原因（端到端排查）
+
+**现象**：`dsh tui` 渲染完全正常，能打字，回车后**什么都没发生**，也没有任何报错。
+
+### 查到的事实（都有证据）
+
+用 `script -qec` 分配真 PTY 自己跑，并把按键字节、屏幕转储、会话日志三路对齐：
+
+```
+按键通道   init: isRaw=true              ← raw mode 正常
+           tui: "a" "b" "\r"             ← 输入确实到了 TUI
+提交链路   onSubmit 触发 → followup 调用 → turn/start → user/message ✓
+模型调用   assistant/attempt: AUTH 401    ← 失败在这一步
+           turn/end: {kind:'error', error:{code:'AUTH', status:401}}
+```
+
+**所以：回车一直是好的，消息也进了会话，是模型调用在失败**——
+`deepseek-official`（dsh-base 的默认 provider）在这台机器上 key 无效。
+而**投影层只认 `assistant/message`，把 `turn/end` 的错误整个丢掉了**，
+界面上只剩一个转完就停的 spinner。
+
+### 修掉的真 bug
+
+`MessageRole.ERROR` + 投影在 `turn/end.reason.kind === 'error'` 时落一行
++ `formatFailure()` + 红色 `errorRenderer`。PTY 实测已可见：
+
+```
+ ✗ AUTH 401: Authentication Fails, Your api key: ****aac4 is invalid
+```
+
+### 排查路上的三个自身错误（都值得记）
+
+| 错误 | 后果 |
+|---|---|
+| 第一版回车兼容写成「见过 CR 就不再翻译 LF」 | CR 先出现一次就把开关置真，真正的 LF 再也不翻译——**等于没修**。LF 与 Ctrl+J 无法区分，不能靠历史猜 |
+| 用 `zlib.zstdDecompressSync` 读会话日志 | 它**只解第一帧**，于是我以为「会话里只有 1 个事件、消息没进会话」，结论完全跑偏。用 `zstd -dc` 才解出全部 20~36 个事件 |
+| 说「没有 TTY 所以测不了」 | 错的。`script -qec` 就能分配真 PTY。**这个项目从一开始就能被我自己端到端测试** |
+
+### 关于「共享 bundle」方案的结论（有实测反例）
+
+原本想把 provider 配置抽成共享 bundle。**实测证明这个方案对本插件行不通**：
+
+1. `dsh-settings` 把改动持久化到**当前 profile 的补丁层**；
+2. 补丁语义是**整体替换 `config`，绝不深合并**；
+3. 于是插件写一次 `health`，profile 层就出现一份**只有 health 的残缺 config**，
+   把 bundle 里的 `groups` 整个盖掉——实测当场复现（`groups 数量: 0`）。
+
+**要做到一份真相**，得把模型定义从「行配置」搬到 `storageDomain`
+（`~/.dsh/storages/`，**跨 profile 共享**）——该插件已经用它存健康数据，
+把 `groups` 一并搬过去即可。那需要改插件本身。
+
+---
