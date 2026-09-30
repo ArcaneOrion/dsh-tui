@@ -13,10 +13,12 @@
  */
 
 import { createRequire } from 'node:module'
+import path from 'node:path'
 
 import { createApp } from './app.js'
 import { createBanner } from './banner.js'
 import { createCommandAutocomplete, createCommandSystem, helpText, parseCommandLine } from './commands.js'
+import { installConsoleGuard } from './console-guard.js'
 import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { installInteractive } from './interactive.js'
@@ -144,6 +146,8 @@ export async function apply(ctx) {
   let exiting = false
   /** 人机回环的卸载器，在 app 起好之后才装上。 */
   let uninstallInteractive = () => {}
+  /** 杂散输出防护的还原函数；app 起好之后才真正装上。 */
+  let restoreConsole = () => {}
 
   /**
    * 退出清理，幂等。shutdown 与 ctx.effect 都走这里。
@@ -155,6 +159,11 @@ export async function apply(ctx) {
       uninstallInteractive()
     } catch {
       // 卸载失败不能阻止退出。
+    }
+    try {
+      restoreConsole()
+    } catch {
+      // 还原 console 失败也不能阻止退出。
     }
     // **在 flush 之前**结算还等着的弹窗。否则 `await kernel.flush()` /
     // `await kernel.dispose()` 可能在等一个永远不来的审批回答，
@@ -382,6 +391,15 @@ export async function apply(ctx) {
 
   // 独立于 TUI 的 stdin 旁观器，只在 DSH_TUI_LOG_KEYS 开启时生效。
   const untapStdin = tapStdin()
+
+  // 杂散输出防护：pi-tui 不拦截 console，任何插件在会话期间 console.log 都会
+  // 直接写进终端把画面搅乱。只接管 console.*，不碰 process.stdout.write
+  // （那是 pi-tui 的渲染通道）。见 src/console-guard.js。
+  const restoreConsoleGuard = installConsoleGuard({
+    logPath: path.join(path.dirname(prefs.file), 'stray-console.log'),
+    onFirst: (message) => app?.notice?.(message),
+  })
+  restoreConsole = restoreConsoleGuard
 
   // 人机回环：不装这两个 waterfall，任何需要授权的工具都会 fail-closed，
   // 模型提问也会直接失败——那样这个 TUI 就只是个聊天框。
