@@ -19,80 +19,11 @@
  *    直接把容器交给 overlay，键盘会石沉大海——必须转发给内部的列表/编辑器。
  */
 
-import { Box, Container, Editor, SelectList, Spacer, Text, fuzzyFilter } from '@earendil-works/pi-tui'
+import { Box, Container, Editor, SelectList, Spacer, Text } from '@earendil-works/pi-tui'
 
 /** 默认的按键提示。 */
-const CHOOSE_HINT = '↑↓ 选择 · 输入即搜索 · Backspace 退格 · Enter 确认 · Esc 取消'
+const CHOOSE_HINT = '↑↓ 选择 · Enter 确认 · Esc 取消'
 const TEXT_HINT = 'Enter 提交 · Esc 取消'
-
-/**
- * 可搜索的选择框内部状态：输入字符即过滤（pi-tui 的 fuzzyFilter，多 token
- * 子序列匹配），Backspace 退格，Enter 选中当前项。
- *
- * SelectList 自带的 setFilter 只做「value 前缀匹配」且空结果文案是英文写死的，
- * 所以在拦截层做自己的过滤、每次重建列表（列表很小，重建是廉价操作）。
- *
- * @param {object} spec
- * @param {Array<{value:string,label:string,description?:string}>} spec.options
- * @param {number} spec.maxVisible
- * @param {(item: {value:string,label:string,description?:string}|undefined) => void} spec.onPick
- */
-function searchableList({ options, maxVisible, onPick }) {
-  const filterLine = new Text('', 0, 0)
-  let query = ''
-  /** @type {SelectList} */
-  let list
-
-  function applyFilter() {
-    let filtered
-    if (query === '') {
-      filtered = options
-    } else {
-      filtered = fuzzyFilter(options, query, (item) => `${item.value} ${item.label}`)
-      if (filtered.length === 0) {
-        // 子序列太严（比如按中文渠道名搜）时退回子串匹配；再不行才真空。
-        const lower = query.toLowerCase()
-        filtered = options.filter(
-          (item) => item.value.toLowerCase().includes(lower) || String(item.label).toLowerCase().includes(lower),
-        )
-      }
-    }
-    list = new SelectList(filtered, Math.max(1, Math.min(filtered.length, maxVisible)), theme_selectList)
-    list.onSelect = (item) => onPick(item)
-    list.onCancel = () => onPick(undefined)
-  }
-
-  function updateFilterLine() {
-    filterLine.text = query === '' ? '' : theme.fg('accent', `搜索: ${query}_`)
-  }
-
-  applyFilter()
-
-  return {
-    /** 把过滤行与列表挂进外框，返回接收焦点的列表。 */
-    mount(frameBox) {
-      frameBox.addChild(filterLine)
-      frameBox.addChild(list)
-      return list
-    },
-    /** 拦截层输入：先吃搜索键，其余转发给列表。 */
-    handleInput(data) {
-      if (data.length === 1 && data >= ' ' && data !== '\x7f') {
-        query += data
-        applyFilter()
-        updateFilterLine()
-        return
-      }
-      if (data === '\x7f' || data === '\b') {
-        query = query.slice(0, -1)
-        applyFilter()
-        updateFilterLine()
-        return
-      }
-      list.handleInput(data)
-    },
-  }
-}
 
 /**
  * 造一个把 `handleInput` 转发给内部组件的包装。
@@ -138,7 +69,6 @@ export function forwarding(container, onInput, tui, onError) {
  * @param {object} options.theme - createTheme() 的产物
  */
 export function createPrompter({ tui, theme }) {
-  theme_selectList = theme.selectList
   /**
    * 所有还没结算的弹窗的结算函数。
    * `cancelAll()` 靠它把内核从永久等待里救出来——见文件头第 1 条。
@@ -211,28 +141,20 @@ export function createPrompter({ tui, theme }) {
   function choose({ title, detail, options, hint = CHOOSE_HINT, maxVisible = 8 }) {
     return open(
       (finish) => {
-        const picker = searchableList({
-          options,
-          maxVisible,
-          onPick: (item) => finish(item === undefined ? undefined : item.value),
-        })
+        const list = new SelectList(options, Math.min(options.length, maxVisible), theme.selectList)
+        list.onSelect = (item) => finish(item.value)
+        list.onCancel = () => finish(undefined)
 
         const container = new Container()
         const box = frame(title, detail)
-        picker.mount(box)
+        box.addChild(list)
         box.addChild(new Spacer(1))
         box.addChild(new Text(theme.fg('dim', hint), 0, 0))
         container.addChild(box)
 
-        return forwarding(
-          container,
-          (data) => picker.handleInput(data),
-          tui,
-          () => finish(undefined),
-        )
+        return forwarding(container, (data) => list.handleInput(data), tui, () => finish(undefined))
       },
-      // 底部居中：贴着输入框上方弹出，视线不用跳到屏幕中央。
-      { anchor: 'bottom-center', offsetY: -3, width: '70%', minWidth: 46, maxWidth: '90%', maxHeight: '60%' },
+      { anchor: 'center', width: '70%', minWidth: 40, maxHeight: '70%' },
     )
   }
 
@@ -301,6 +223,3 @@ export function createPrompter({ tui, theme }) {
     pendingCount: () => pending.size,
   }
 }
-
-/** searchableList 用的主题引用（createPrompter 闭包内绑定）。 */
-let theme_selectList
