@@ -15,6 +15,7 @@
 import { createApp } from './app.js'
 import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
+import { installInteractive } from './interactive.js'
 import { createKernel } from './kernel.js'
 import { installDefaultRenderers } from './messages.js'
 import { applySessionEvent, createView } from './projection.js'
@@ -105,12 +106,20 @@ export async function apply(ctx) {
   // ── 界面 ──────────────────────────────────────────────────────────────
 
   let exiting = false
+  /** 人机回环的卸载器，在 app 起好之后才装上。 */
+  let uninstallInteractive = () => {}
 
   /**
    * 退出清理，幂等。shutdown 与 ctx.effect 都走这里。
-   * 顺序很重要：先把会话刷进存储，再拆界面，最后销毁 agent——反过来会丢最后一段对话。
+   * 顺序很重要：先摘掉交互回环（不再接新的审批/提问），再把会话刷进存储，
+   * 然后拆界面，最后销毁 agent——反过来会丢最后一段对话。
    */
   async function teardown({ flush = true } = {}) {
+    try {
+      uninstallInteractive()
+    } catch {
+      // 卸载失败不能阻止退出。
+    }
     if (flush) {
       try {
         await kernel.flush()
@@ -187,6 +196,15 @@ export async function apply(ctx) {
   } catch (error) {
     await teardown({ flush: true })
     throw new Error(`dsh-tui: failed to start the terminal UI — ${error?.message ?? error}`)
+  }
+
+  // 人机回环：不装这两个 waterfall，任何需要授权的工具都会 fail-closed，
+  // 模型提问也会直接失败——那样这个 TUI 就只是个聊天框。
+  try {
+    uninstallInteractive = installInteractive({ ctx, app, isAvailable: () => !exiting })
+  } catch (error) {
+    await teardown({ flush: true })
+    throw new Error(`dsh-tui: failed to install the interactive loops — ${error?.message ?? error}`)
   }
 
   if (typeof startup.prompt === 'string' && startup.prompt.trim() !== '') {

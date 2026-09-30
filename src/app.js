@@ -21,6 +21,7 @@
 
 import { Container, Editor, Key, matchesKey, ProcessTerminal, Text, TUI, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { DefaultFooter } from './footer.js'
+import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
 
 /** 默认的工作动画帧。 */
@@ -190,6 +191,8 @@ export function createApp(options) {
 
   const terminal = new ProcessTerminal()
   const tui = new TUI(terminal)
+  // 审批与提问用的模态弹窗。内核会停下来等它们的回答。
+  const prompter = createPrompter({ tui, theme })
 
   const root = new Container()
   const headerSlot = new Container()
@@ -309,6 +312,10 @@ export function createApp(options) {
 
   return {
     tui,
+    /** 弹一个选择框，返回选中值或 undefined。供人机回环使用。 */
+    choose: prompter.choose,
+    /** 弹一个文本输入框，返回输入内容或 undefined。 */
+    askText: prompter.askText,
     get editor() {
       return editor
     },
