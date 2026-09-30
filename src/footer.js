@@ -23,8 +23,15 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import { createEventTail } from './session-events.js'
 
-/** 分段之间的分隔符。 */
-const SEPARATOR = ' │ '
+/**
+ * 分段之间的分隔符。
+ *
+ * 用 `|` 而不是 `│`——与 pi 底栏的实际输出一致（实机对照过）。
+ */
+const SEPARATOR = ' | '
+
+/** 末尾的权限/沙箱模式用 `·` 与前文分开（pi 的写法：`…  ·  yolo`）。 */
+const MODE_SEPARATOR = '  ·  '
 
 /**
  * 把 token 数格式化成人类可读的短形式。
@@ -320,7 +327,11 @@ export class DefaultFooter {
     }
 
     if (snapshot.sandbox !== undefined) {
-      segments.push({ text: snapshot.sandbox, tone: snapshot.sandbox === 'yolo' ? 'warning' : 'muted' })
+      segments.push({
+        text: snapshot.sandbox,
+        tone: snapshot.sandbox === 'yolo' ? 'warning' : 'muted',
+        separator: MODE_SEPARATOR,
+      })
     }
 
     // 注册表里的状态片段：调用方已自带配色，原样接在后面。
@@ -341,7 +352,12 @@ export class DefaultFooter {
 
     const style = (s) => (s.tone === undefined ? s.text : theme.fg(s.tone, s.text))
 
-    let left = segments.map(style).join(theme.fg('dim', SEPARATOR))
+    // 逐段拼接，让每段可以自带分隔符（模式段用的是 `·` 而不是 `|`）。
+    let left = ''
+    for (const segment of segments) {
+      if (left !== '') left += theme.fg('dim', segment.separator ?? SEPARATOR)
+      left += style(segment)
+    }
     let right = sessionLabel === undefined ? '' : theme.fg('dim', sessionLabel)
 
     // 宽度不够时按「先丢右、再截左」的顺序退让，保证永远不溢出。
