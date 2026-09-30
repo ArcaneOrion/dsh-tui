@@ -7,9 +7,39 @@
 ```sh
 dsh tui                    # 启动
 dsh tui "跑一下测试"        # 带初始提示词
-dsh tui --resume <id>      # 恢复会话
+dsh tui --resume <id>      # 恢复会话（已端到端验证：历史对话会重新渲染）
 dsh tui --model provider/model
 ```
+
+`DSH_TUI_LF_SUBMITS=0` 可保留 `Ctrl+J` 换行（默认把 LF 当回车提交，见下）。
+
+---
+
+## 装起来
+
+本 TUI 是 dsh 的一个 bundle，运行需要一个 profile。四步：
+
+```sh
+# 1. 建 profile 并装插件（dsh 会自动初始化 profile）
+dsh plugin --profile tui add link:/path/to/DSH-TUI
+
+# 2. 让 profile 引用它（编辑 ~/.dsh/profiles/tui/package.json）
+#    "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@arcaneorion/dsh-tui"] } }
+
+# 3. 在 profile 的 cordis.patch.yml 里指定模型路由
+#    （dsh-base 的默认是 deepseek-official/deepseek-flash，需要有效的 key）
+#    - id: agent-default-model
+#      config: { provider: <你的>, model: <你的> }
+
+# 4. 跑
+dsh tui
+```
+
+**上火先跑 `/doctor`。** 它直接回答「哪些内核服务接上了」——底栏哪一段没出现、
+审批弹窗有没有应答者、工具注册表有几件，都在这条命令里。
+
+`dsh tui` 是 `dsh --profile tui` 的简写（由本机 `dsh` 包装脚本重写，
+**只认 `tui` 这一个名字**）。
 
 ---
 
