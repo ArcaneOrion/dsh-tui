@@ -51,6 +51,17 @@ export function reasoningOfContent(content) {
   return parts.join('')
 }
 
+/** 把一次失败格式化成一行可读文本。 */
+export function formatFailure(error) {
+  if (error === null || error === undefined) return '未知错误'
+  if (typeof error === 'string') return error
+  const code = typeof error.code === 'string' && error.code !== '' ? error.code : undefined
+  const status = Number.isFinite(error.status) ? String(error.status) : undefined
+  const message = typeof error.message === 'string' && error.message !== '' ? error.message : JSON.stringify(error)
+  const tag = [code, status].filter(Boolean).join(' ')
+  return tag === '' ? message : `${tag}: ${message}`
+}
+
 /** 新建一个空的视图模型。 */
 export function createView() {
   return {
@@ -109,6 +120,22 @@ export function applySessionEvent(view, event, present = undefined) {
       // 回合结束而流式缓冲没被提交事件收走（例如被中断），也要落下，
       // 否则那段文字会永远停在「正在输入」状态。
       flushStreaming(view)
+
+      // **回合以错误结束必须看得见。**
+      //
+      // 这是实机踩出来的：请求发出去了、API 返回 401，而投影层只认
+      // `assistant/message`，把 `turn/end` 的 error 原因丢进一个没人渲染的字段。
+      // 用户看到的就是「回车没反应」——一个转完就停的 spinner，没有任何提示。
+      // 静默失败比报错难查一百倍。
+      if (data?.reason?.kind === 'error') {
+        pushRow(view, {
+          key: nextKey('error'),
+          role: MessageRole.ERROR,
+          text: formatFailure(data.reason.error),
+          done: true,
+          seq: event.seq,
+        })
+      }
       touch(view)
       return true
     }

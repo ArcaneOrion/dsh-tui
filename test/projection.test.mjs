@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { applySessionEvent, applyStreamFrame, createView, reasoningOfContent, replay, textOfContent } from '../src/projection.js'
+import { applySessionEvent, applyStreamFrame, createView, formatFailure, reasoningOfContent, replay, textOfContent } from '../src/projection.js'
 
 // ── 构造测试事件的小工具 ─────────────────────────────────────────────────
 
@@ -215,6 +215,43 @@ test('【核心不变量】回放与实时得到完全相同的行', () => {
 })
 
 // ── 修复项的回归测试 ─────────────────────────────────────────────────────
+
+test('【回归】turn/end 的错误原因必须变成一条可见的错误行', () => {
+  // 实机踩到的：请求发出去了、API 返回 401，而投影层只认 assistant/message，
+  // 把 turn/end 的 error 原因丢进一个没人渲染的字段。用户看到的就是
+  // 「回车没反应」——一个转完就停的 spinner，没有任何提示。
+  const view = createView()
+  applySessionEvent(view, {
+    seq: 9,
+    type: 'turn/end',
+    data: {
+      turn: 1,
+      reason: {
+        kind: 'error',
+        error: { code: 'AUTH', status: 401, message: 'Authentication Fails, Your api key: ****aac4 is invalid' },
+      },
+    },
+  })
+  assert.equal(view.rows.length, 1)
+  assert.equal(view.rows[0].role, 'error')
+  assert.match(view.rows[0].text, /AUTH/)
+  assert.match(view.rows[0].text, /401/)
+  assert.match(view.rows[0].text, /api key/)
+})
+
+test('正常完成的回合不产生错误行', () => {
+  const view = createView()
+  applySessionEvent(view, { seq: 9, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  assert.equal(view.rows.length, 0)
+})
+
+test('formatFailure 把 code/status/message 拼成一行', () => {
+  assert.equal(formatFailure({ code: 'AUTH', status: 401, message: 'bad key' }), 'AUTH 401: bad key')
+  assert.equal(formatFailure({ message: 'boom' }), 'boom')
+  assert.equal(formatFailure('直接是字符串'), '直接是字符串')
+  assert.equal(formatFailure(undefined), '未知错误')
+  assert.equal(formatFailure({ code: 'X' }), 'X: {"code":"X"}')
+})
 
 test('replay 把 turnActive 归零：历史不代表现在有回合在跑', () => {
   // 日志可能停在 turn/start（上次进程崩在回合中间）。如果 replay 不归零，

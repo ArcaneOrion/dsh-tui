@@ -59,6 +59,16 @@ export function warnRenderer({ row, theme }) {
   return new Text(theme.fg('warning', '⚠ ' + row.text), 1, 0)
 }
 
+/**
+ * 错误行：红色，必须醒目。
+ *
+ * 存在的理由：请求失败（401、超时、模型不存在…）原本被投影层整个丢掉，
+ * 用户看到的是「回车没反应」。失败必须说出来。
+ */
+export function errorRenderer({ row, theme }) {
+  return new Text(theme.fg('error', '✗ ' + row.text), 1, 0)
+}
+
 /** 系统提示行（例如切换模型、会话恢复）。 */
 export function noticeRenderer({ row, theme }) {
   return new Text(theme.fg('dim', '· ' + row.text), 1, 0)
@@ -77,6 +87,7 @@ export function installDefaultRenderers(registry) {
     registry.setMessageRenderer('tool', toolRenderer),
     registry.setMessageRenderer('notice', noticeRenderer),
     registry.setMessageRenderer('warn', warnRenderer),
+    registry.setMessageRenderer('error', errorRenderer),
     registry.setMessageRenderer('info', infoRenderer),
     // 兜底：未知角色按提示行渲染，永不崩。
     registry.setMessageRenderer('*', noticeRenderer),

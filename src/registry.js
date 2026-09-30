@@ -25,6 +25,12 @@ export const MessageRole = Object.freeze({
   REASONING: 'reasoning',
   TOOL: 'tool',
   NOTICE: 'notice',
+  /** 告警：能继续，但值得看一眼。 */
+  WARN: 'warn',
+  /** 错误：回合失败、请求被拒。**必须显示**，不能吞。 */
+  ERROR: 'error',
+  /** 开机信息块这类结构化内容。 */
+  INFO: 'info',
 })
 
 /** 所有合法角色，供缺省渲染器兜底。 */
