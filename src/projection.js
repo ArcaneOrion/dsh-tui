@@ -77,6 +77,10 @@ export function createView() {
     lastTurnReason: undefined,
     /** callId → 已插入的工具行，用于把 tool/result 配回 tool/call。 */
     tools: new Map(),
+    contextRevision: 0,
+    step: undefined,
+    turn: undefined,
+    turnStartedAt: undefined,
   }
 }
 
@@ -106,9 +110,19 @@ export function applySessionEvent(view, event, present = undefined) {
   if (event === null || typeof event !== 'object') return false
   const data = event.data
 
+  // A replacement changes model input, not the human transcript. Its exact
+  // resulting content is available through the native /context inspector.
+  if (event.surfaceOp && typeof event.surfaceOp === 'object' && event.surfaceOp.op === 'replace') {
+    view.contextRevision += 1
+    touch(view)
+    return true
+  }
+
   switch (event.type) {
     case 'turn/start': {
       view.turnActive = true
+      view.turn = data?.turn
+      view.turnStartedAt = event.time
       view.lastTurnReason = undefined
       touch(view)
       return true
@@ -145,13 +159,20 @@ export function applySessionEvent(view, event, present = undefined) {
       // assistant/message 那样包在 .message 里）。这里两种形状都兼容。
       const msg = data?.message ?? data
       const text = textOfContent(msg?.content)
-      if (text === '') return false
+      const images = Array.isArray(msg?.content) ? msg.content.filter((block) => block?.type === 'image').length : 0
+      if (text === '' && !images) return false
+      const source = msg?.source
+      const context = typeof source?.form === 'string'
       pushRow(view, {
         key: nextKey('user'),
-        role: MessageRole.USER,
-        text,
+        role: context ? 'context' : MessageRole.USER,
+        text: text + (images ? `\n[图片 × ${images}]` : ''),
+        source,
+        title: source?.summary ?? source?.name ?? source?.kind,
         done: true,
         seq: event.seq,
+        turn: data?.turn,
+        step: data?.step,
       })
       return true
     }
@@ -175,6 +196,8 @@ export function applySessionEvent(view, event, present = undefined) {
         interrupted: data?.interrupted === true,
         usage: data?.usage,
         seq: event.seq,
+        turn: data?.turn,
+        step: data?.step,
       })
       return true
     }
@@ -205,6 +228,7 @@ export function applySessionEvent(view, event, present = undefined) {
         text: '',
         done: false,
         seq: event.seq,
+        startedAt: event.time,
       })
       if (typeof data?.callId === 'string') view.tools.set(data.callId, row)
       return true
@@ -230,6 +254,7 @@ export function applySessionEvent(view, event, present = undefined) {
         row.done = true
         row.isError = isError
         row.errorReason = data?.error?.reason
+        row.finishedAt = event.time
         row.resultView = resolveResultView(row.toolName, row.args)
         row.rev = (row.rev ?? 0) + 1
         touch(view)
@@ -251,12 +276,28 @@ export function applySessionEvent(view, event, present = undefined) {
       return true
     }
 
+    case 'step/start':
+      view.step = data?.step
+      touch(view)
+      return true
+    case 'agent/inbox/spliced':
+      touch(view)
+      return true
+    case 'compaction/start':
+      view.compacting = true
+      touch(view)
+      return true
+    case 'compaction/end':
+      view.compacting = false
+      pushRow(view, { key: nextKey('compact'), role: MessageRole.NOTICE, text: '上下文整理结束 · /context 查看当前内容', done: true })
+      return true
     case 'system/message':
+      view.contextRevision += 1
+      return false
     case 'developer/message':
     case 'request/header':
     case 'request/context':
     case 'session/end-seed':
-    case 'step/start':
     case 'step/end':
       // 有意不投影：这些是请求构造或生命周期标记，不是对话内容。
       return false
@@ -348,5 +389,6 @@ export function replay(view = createView(), events, present = undefined) {
   // 现在有回合在跑。实时性由 agent 状态决定，不由历史决定——否则 resume 之后
   // turnActive 永远为 true，spinner 常转，Ctrl+C 也永远只会去「中断」而退不出。
   view.turnActive = false
+  view.compacting = false
   return view
 }

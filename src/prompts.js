@@ -20,6 +20,7 @@
  */
 
 import { Box, Container, Editor, SelectList, Spacer, Text, fuzzyFilter, truncateToWidth } from '@earendil-works/pi-tui'
+import { DocumentView } from './document.js'
 
 /** 默认的按键提示。 */
 const CHOOSE_HINT = '↑↓ 选择 · 输入即搜索 · Backspace 退格 · Enter 确认 · Esc 取消'
@@ -58,7 +59,7 @@ function searchableList({ theme, options, maxVisible, onPick }) {
    * filteredItems / selectedIndex（SelectList 的公开字段）。
    * 每次重建实例是上一版的 bug：挂在外框里的永远是旧实例，输入过滤毫无效果。
    */
-  const list = new SelectList(options, Math.max(1, Math.min(options.length, maxVisible)), theme_selectList)
+  const list = new SelectList(options, Math.max(1, Math.min(options.length, maxVisible)), theme.selectList)
   list.onSelect = (item) => onPick(item)
   list.onCancel = () => onPick(undefined)
 
@@ -87,13 +88,13 @@ function searchableList({ theme, options, maxVisible, onPick }) {
     },
     /** 拦截层输入：先吃搜索键，其余转发给列表。 */
     handleInput(data) {
-      if (data.length === 1 && data >= ' ' && data !== '\x7f') {
+      if (data.length > 0 && !/[\x00-\x1f\x7f]/.test(data)) {
         query += data
         applyFilter()
         return
       }
       if (data === '\x7f' || data === '\b') {
-        query = query.slice(0, -1)
+        query = Array.from(query).slice(0, -1).join('')
         applyFilter()
         return
       }
@@ -146,7 +147,6 @@ export function forwarding(container, onInput, tui, onError) {
  * @param {object} options.theme - createTheme() 的产物
  */
 export function createPrompter({ tui, theme }) {
-  theme_selectList = theme.selectList
   /**
    * 所有还没结算的弹窗的结算函数。
    * `cancelAll()` 靠它把内核从永久等待里救出来——见文件头第 1 条。
@@ -159,14 +159,16 @@ export function createPrompter({ tui, theme }) {
    * @param {(finish:(value:any)=>void)=>object} build - 构造交给 overlay 的组件
    * @param {object} overlayOptions
    */
-  function open(build, overlayOptions) {
+  function open(build, overlayOptions, signal) {
     return new Promise((resolve) => {
+      if (signal?.aborted) { resolve(undefined); return }
       let handle
       let settled = false
 
       const finish = (value) => {
         if (settled) return
         settled = true
+        signal?.removeEventListener('abort', onAbort)
         pending.delete(finish)
         try {
           handle?.hide()
@@ -175,6 +177,9 @@ export function createPrompter({ tui, theme }) {
         }
         resolve(value)
       }
+
+      const onAbort = () => finish(undefined)
+      signal?.addEventListener('abort', onAbort, { once: true })
 
       pending.add(finish)
 
@@ -201,7 +206,8 @@ export function createPrompter({ tui, theme }) {
     const box = new Box(1, 1, (s) => theme.bg('panelBg', s))
     box.addChild(new Text(theme.fg('accent', theme.bold(title)), 1, 0))
     if (typeof detail === 'string' && detail !== '') {
-      box.addChild(new Text(theme.fg('muted', detail), 1, 0))
+      const preview = detail.length > 240 ? detail.slice(0, 240) + '…' : detail
+      box.addChild(new Text(theme.fg('muted', preview.split('\n').slice(0, 4).join('\n')), 1, 0))
     }
     box.addChild(new Spacer(1))
     return box
@@ -216,13 +222,13 @@ export function createPrompter({ tui, theme }) {
    * @param {Array<{value:string,label:string,description?:string}>} spec.options
    * @returns {Promise<string|undefined>} 选中值；取消时为 undefined
    */
-  function choose({ title, detail, options, hint = CHOOSE_HINT, maxVisible = 8 }) {
+  function choose({ title, detail, options, hint = CHOOSE_HINT, maxVisible = 8, signal }) {
     return open(
       (finish) => {
         const picker = searchableList({
           theme,
           options,
-          maxVisible,
+          maxVisible: Math.min(maxVisible, Math.max(1, Math.floor((tui.terminal?.rows ?? 30) * 0.85) - 12)),
           onPick: (item) => finish(item === undefined ? undefined : item.value),
         })
 
@@ -247,7 +253,8 @@ export function createPrompter({ tui, theme }) {
         )
       },
       // 底部居中：贴着输入框上方弹出，视线不用跳到屏幕中央。
-      { anchor: 'bottom-center', offsetY: -3, width: '70%', minWidth: 46, maxWidth: '90%', maxHeight: '60%' },
+      { anchor: 'center', width: '85%', minWidth: 24, maxWidth: '96%', maxHeight: '85%' },
+      signal,
     )
   }
 
@@ -259,7 +266,7 @@ export function createPrompter({ tui, theme }) {
    * @param {string} [spec.detail]
    * @returns {Promise<string|undefined>}
    */
-  function askText({ title, detail, hint = TEXT_HINT }) {
+  function askText({ title, detail, hint = TEXT_HINT, signal }) {
     return open(
       (finish) => {
         const editor = new Editor(tui, theme.editor)
@@ -289,7 +296,8 @@ export function createPrompter({ tui, theme }) {
           () => finish(undefined),
         )
       },
-      { anchor: 'center', width: '70%', minWidth: 40 },
+      { anchor: 'center', width: '85%', minWidth: 24, maxWidth: '96%', maxHeight: '85%' },
+      signal,
     )
   }
 
@@ -311,11 +319,13 @@ export function createPrompter({ tui, theme }) {
   return {
     choose,
     askText,
+    document({ title, text, signal }) {
+      return open((finish) => new DocumentView({ title, text, theme,
+        getHeight: () => tui.terminal?.rows ?? 24, onClose: () => finish(true) }),
+      { anchor: 'center', width: '94%', minWidth: 20, maxWidth: '100%', maxHeight: '95%' }, signal)
+    },
     cancelAll,
     /** 当前还有几个弹窗在等回答（诊断用）。 */
     pendingCount: () => pending.size,
   }
 }
-
-/** searchableList 用的主题引用（createPrompter 闭包内绑定）。 */
-let theme_selectList

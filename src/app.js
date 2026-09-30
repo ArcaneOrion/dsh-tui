@@ -25,6 +25,8 @@ import { createEnterCompat, enterCompatFromEnv } from './input-compat.js'
 import { logKey, logTerminalState } from './keylog.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
+import { WorkbenchEditor } from './composer.js'
+import { fit } from './layout.js'
 
 /** 默认的工作动画帧。 */
 const DEFAULT_WORKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -59,14 +61,14 @@ export class ChatView {
     try {
       component = factory({ row, theme: this.theme, registry: this.registry })
     } catch (error) {
-      return [this.theme.fg('error', `渲染 ${row.role} 行失败：${error?.message ?? error}`)]
+      return [fit(this.theme.fg('error', `渲染 ${row.role} 行失败：${error?.message ?? error}`), width)]
     }
     if (component === undefined || component === null) return []
     if (typeof component.render !== 'function') return []
     try {
       return component.render(width)
     } catch (error) {
-      return [this.theme.fg('error', `渲染 ${row.role} 行失败：${error?.message ?? error}`)]
+      return [fit(this.theme.fg('error', `渲染 ${row.role} 行失败：${error?.message ?? error}`), width)]
     }
   }
 
@@ -122,7 +124,8 @@ export class ChatView {
 
     if (lines.length === 0) {
       lines.push('')
-      lines.push(this.theme.fg('dim', '  开始输入吧。Ctrl+C 退出，Esc 中断当前回合。'))
+      lines.push(fit(this.theme.fg('muted', '  从一个问题、一份文件，或一件想完成的事开始。'), width))
+      lines.push(fit(this.theme.fg('dim', '  开始输入 · /context 上下文 · /tools 工具 · /agents 协作'), width))
       lines.push('')
     }
 
@@ -157,8 +160,8 @@ class WorkingLine {
     const state = this.getState()
     const options = this.registry.workingIndicator
     const frames = options?.frames ?? DEFAULT_WORKING_FRAMES
-    const active = state.turnActive === true
-    const key = `${active}|${this.frame}|${state.statusText}`
+    const active = (state.workingActive ?? state.turnActive) === true
+    const key = `${width}|${active}|${this.frame}|${state.statusText}`
     if (this.cache !== undefined && this.lastKey === key) return this.cache
     this.lastKey = key
 
@@ -191,7 +194,7 @@ class WorkingLine {
 export function createApp(options) {
   const { view, theme, registry, onSubmit, onCommand, onInterrupt, onExit, getSnapshot, getSessionLabel, getState } = options
 
-  const terminal = new ProcessTerminal()
+  const terminal = options.terminal ?? new ProcessTerminal()
   const tui = new TUI(terminal)
   // 审批与提问用的模态弹窗。内核会停下来等它们的回答。
   const prompter = createPrompter({ tui, theme })
@@ -200,6 +203,14 @@ export function createApp(options) {
   const headerSlot = new Container()
   const chat = new ChatView({ view, theme, registry })
   const working = new WorkingLine({ theme, registry, getState })
+  const queueLine = {
+    invalidate() {},
+    render(width) {
+      const state = options.getQueueState?.()
+      if (!state || (!state.queued && !state.steering)) return []
+      return [fit(theme.fg('warning', ` ◇ 待处理：${state.queued} 条下一轮 · ${state.steering} 条下一步  /queue`), width)]
+    },
+  }
   const aboveWidgets = new Container()
   const belowWidgets = new Container()
 
@@ -220,18 +231,18 @@ export function createApp(options) {
   function buildEditor() {
     const factory = registry.editorFactory
     const component =
-      typeof factory === 'function' ? factory(tui, theme, registry) : new Editor(tui, theme.editor)
+      typeof factory === 'function' ? factory(tui, theme, registry) : new WorkbenchEditor(tui, theme, getState)
     if (component === undefined || component === null) return component
 
     component.onSubmit = (text) => {
       const trimmed = String(text ?? '').trim()
       if (trimmed === '') return
-      component.setText('')
       // pi-tui 的 Editor 自带历史；显式记一笔，翻上下键能找回刚发的内容。
-      component.addToHistory?.(trimmed)
       // 斜杠行走命令通道，**绝不**当作消息发给模型。
-      if (trimmed.startsWith('/')) onCommand?.(trimmed)
-      else onSubmit(trimmed)
+      const accepted = trimmed.startsWith('/') ? onCommand?.(trimmed) : onSubmit(trimmed)
+      if (accepted === false) return
+      component.addToHistory?.(trimmed)
+      component.setText('')
     }
 
     // 补全：命令走行首 `/`，文件引用走 `@`。pi-tui 的 Editor 只接受一个
@@ -272,7 +283,8 @@ export function createApp(options) {
     const intervalMs = registry.workingIndicator?.intervalMs ?? DEFAULT_WORKING_INTERVAL
     ticker = setInterval(() => {
       if (disposed) return
-      if (getState().turnActive !== true) return
+      const state = getState()
+      if ((state.workingActive ?? state.turnActive) !== true) return
       working.setFrame(working.frame + 1)
       tui.requestRender()
     }, Math.max(16, intervalMs))
@@ -294,9 +306,15 @@ export function createApp(options) {
   let lastEditorFactory
   let lastIndicatorKey
   let lastWidgetKeys = ''
+  let lastMessageRevision = registry.messageRevision
+  const componentIds = new WeakMap()
+  let componentSeq = 0
 
   function widgetKey(list) {
-    return list.map((w) => `${w.order}:${Array.isArray(w.component) ? w.component.join('\u0000') : 'c'}`).join('|')
+    return list.map((w) => {
+      if (w.component && typeof w.component === 'object' && !componentIds.has(w.component)) componentIds.set(w.component, ++componentSeq)
+      return `${w.order}:${Array.isArray(w.component) ? w.component.join('\u0000') : componentIds.get(w.component)}`
+    }).join('|')
   }
 
   const unsubscribe = registry.subscribe(() => {
@@ -334,7 +352,10 @@ export function createApp(options) {
       restartTicker()
     }
 
-    chat.invalidate()
+    if (registry.messageRevision !== lastMessageRevision) {
+      lastMessageRevision = registry.messageRevision
+      chat.invalidate()
+    }
     working.invalidate()
     tui.requestRender()
   })
@@ -342,6 +363,9 @@ export function createApp(options) {
   rebuildEditor()
   rebuildFooter()
   restartTicker()
+  if (registry.header) headerSlot.addChild(registry.header)
+  rebuildWidgets(aboveWidgets, registry.widgetList(WidgetPlacement.ABOVE_EDITOR))
+  rebuildWidgets(belowWidgets, registry.widgetList(WidgetPlacement.BELOW_EDITOR))
 
   // 记下初始实现的引用，这样后续通知不会把刚建好的东西又重建一遍
   // （重建 = 丢输入内容 + 抢焦点，代价很高）。
@@ -357,6 +381,7 @@ export function createApp(options) {
   root.addChild(headerSlot)
   root.addChild(chat)
   root.addChild(working)
+  root.addChild(queueLine)
   root.addChild(aboveWidgets)
   root.addChild(editorSlot)
   root.addChild(belowWidgets)
@@ -412,28 +437,36 @@ export function createApp(options) {
       return { consume: true }
     }
     if (matchesKey(data, Key.escape)) {
+      if (tui.hasOverlay()) return undefined
       if (getState().turnActive === true) {
         onInterrupt()
         return { consume: true }
       }
       return undefined
     }
+    if (!tui.hasOverlay()) {
+      const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking']]
+      for (const [key, command] of shortcuts) {
+        if (matchesKey(data, key)) { onCommand?.(command); return { consume: true } }
+      }
+    }
     return undefined
   })
 
   return {
     tui,
+    supportsPromptSignals: true,
     /** 弹一个选择框，返回选中值或 undefined。供人机回环使用。 */
     choose: prompter.choose,
     /** 弹一个文本输入框，返回输入内容或 undefined。 */
     askText: prompter.askText,
+    document: prompter.document,
     get editor() {
       return editor
     },
     /** 重新渲染（模型更新后由 kernel 层调用）。 */
     requestRender: () => {
       if (disposed) return
-      chat.invalidate()
       working.invalidate()
       footer?.invalidate?.()
       tui.requestRender()

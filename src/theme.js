@@ -73,57 +73,57 @@ function makeSgr(depth) {
 export const DARK_TOKENS = Object.freeze({
   // 基础文字
   text: '',
-  muted: '#787c99',
-  dim: '#565f89',
+  muted: '#9aa8aa',
+  dim: '#718184',
 
   // 强调 / 边框
-  accent: '#7aa2f7',
-  border: '#3b4261',
-  borderAccent: '#7aa2f7',
-  borderMuted: '#2f3549',
+  accent: '#88c8bc',
+  border: '#354849',
+  borderAccent: '#88c8bc',
+  borderMuted: '#283738',
 
   // 状态
-  success: '#9ece6a',
-  error: '#f7768e',
-  warning: '#e0af68',
+  success: '#a8c88d',
+  error: '#ed9891',
+  warning: '#dfbb83',
 
   // 角色
   //
   // 命名对齐 pi 的消息词汇（userMessageBg / userMessageText / thinkingText），
   // 这样两边的设计语言是同一套——照着 pi 读代码时不用做心智翻译。
-  userMessageBg: '#1f2335',
-  userMessageText: '#c0caf5',
-  userBorder: '#7aa2f7',
-  assistantBorder: '#3b4261',
-  thinkingText: '#565f89',
+  userMessageBg: '#192626',
+  userMessageText: '#e4e4dc',
+  userBorder: '#88c8bc',
+  assistantBorder: '#354849',
+  thinkingText: '#9aa8aa',
 
   // 工具
-  toolTitle: '#7aa2f7',
-  toolOutput: '#a9b1d6',
-  toolPendingBg: '#1f2335',
-  toolSuccessBg: '#1c2b21',
-  toolErrorBg: '#2e1e24',
+  toolTitle: '#bdccc8',
+  toolOutput: '#c4ccca',
+  toolPendingBg: '#182324',
+  toolSuccessBg: '#182324',
+  toolErrorBg: '#2b2020',
 
   // diff
-  diffAdded: '#9ece6a',
-  diffRemoved: '#f7768e',
-  diffContext: '#565f89',
+  diffAdded: '#a8c88d',
+  diffRemoved: '#ed9891',
+  diffContext: '#9aa8aa',
 
   // 选择 / 背景
-  selectedBg: '#2f3549',
+  selectedBg: '#2b4341',
   /** 弹窗面板底色：比 selectedBg 暗得多，读作「浮起来的面板」而不是一大块灰板。 */
-  panelBg: '#161a29',
-  panelBorder: '#3b4261',
+  panelBg: '#152021',
+  panelBorder: '#354849',
 
   // 底栏：每段一个色相（对照 pi 的实机配色），分隔线用暖琥珀。
-  footerBorder: '#c1843a',
-  dirLabel: '#7dcfff',
-  branchLabel: '#bb9af7',
-  thinkLabel: '#e0af68',
+  footerBorder: '#354849',
+  dirLabel: '#88c8bc',
+  branchLabel: '#9aa8aa',
+  thinkLabel: '#dfbb83',
 
   // 输入框
-  editorBorder: '#3b4261',
-  editorBorderActive: '#7aa2f7',
+  editorBorder: '#354849',
+  editorBorderActive: '#88c8bc',
 })
 
 // ── 主题对象 ─────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ export function createTheme(tokens = DARK_TOKENS, env = process.env) {
     const color = tokens[token]
     if (color === undefined) return String(text)
     const prefix = sgr(color, true)
-    return prefix === '' ? String(text) : prefix + text + RESET
+    return prefix === '' ? String(text) : prefix + String(text).replaceAll(RESET, RESET + prefix) + RESET
   }
 
   const bold = (s) => `\x1b[1m${s}\x1b[22m`

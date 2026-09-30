@@ -241,17 +241,17 @@ test('createFooterInfo 没有 selection 时退回会话日志的实际路由', (
   assert.equal(snap.thinking, 'max')
 })
 
-test('createFooterInfo selection 缺 effort 时借用实际路由的 effort', () => {
+test('切换模型后不把旧路由的推理强度显示成新模型状态', () => {
   const info = createFooterInfo({
     ctx: { get: () => undefined },
     getAgent: () => ({ session: sessionWith({ provider: 'real', model: 'real-model', reasoningEffort: 'max' }) }),
-    // /model 直切不带 effort：显示上一次实际用的档位，比空白诚实。
+    // 新路由没有指定 effort，不能沿用另一个模型的档位。
     getSelection: () => ({ provider: 'asked', model: 'asked-model' }),
     cwd: '/tmp',
   })
   const snap = info.snapshot()
   assert.equal(snap.model, 'asked-model')
-  assert.equal(snap.thinking, 'max')
+  assert.equal(snap.thinking, undefined)
 })
 
 test('createFooterInfo 取的是**最后一条** request/header', () => {

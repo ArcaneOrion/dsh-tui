@@ -16,7 +16,7 @@ const TRUE = { COLORTERM: 'truecolor' }
 const P256 = { COLORTERM: '' }
 
 test('真彩下 fg 产出 24 位序列', () => {
-  const theme = createTheme(DARK_TOKENS, TRUE)
+  const theme = createTheme({ ...DARK_TOKENS, accent: '#7aa2f7' }, TRUE)
   assert.equal(theme.depth, 'truecolor')
   const out = theme.fg('accent', 'X')
   assert.match(out, /^\x1b\[38;2;122;162;247mX\x1b\[0m$/)
@@ -30,7 +30,7 @@ test('256 降级下 fg 产出调色板索引序列', () => {
 })
 
 test('bg 用背景色序列', () => {
-  const theme = createTheme(DARK_TOKENS, TRUE)
+  const theme = createTheme({ ...DARK_TOKENS, toolPendingBg: '#1f2335' }, TRUE)
   assert.match(theme.bg('toolPendingBg', 'X'), /^\x1b\[48;2;31;35;53mX\x1b\[0m$/)
 })
 

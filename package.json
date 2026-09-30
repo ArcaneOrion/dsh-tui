@@ -28,6 +28,7 @@
     "src",
     "bin",
     "scripts",
+    "docs",
     "cordis.patch.yml",
     "presets",
     "README.md",
@@ -36,7 +37,9 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "audit": "node scripts/audit.mjs",
-    "check": "node --check src/index.js && node --check src/app.js && node --check src/kernel.js && node --check src/projection.js && node --check src/registry.js && node --check src/messages.js && node --check src/theme.js && node --check src/host.js && node --check src/startup.js"
+    "check": "node --check src/index.js && node --check src/app.js && node --check src/kernel.js && node --check src/projection.js && node --check src/registry.js && node --check src/messages.js && node --check src/theme.js && node --check src/host.js && node --check src/startup.js && node --check src/workbench.js && node --check src/document.js && node --check src/composer.js && node --check src/layout.js && node --check src/prompts.js && node --check src/footer.js && node --check src/interactive.js && node --check src/mentions.js",
+    "demo": "node scripts/demo.mjs",
+    "design:preview": "node scripts/design-preview.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.82.0"
@@ -49,6 +52,7 @@
     "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.1",
     "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.1",
     "@deepseek-ai/dsh-cmdline": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-file-reference": "0.2.0-rc.1",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.1",
     "@deepseek-ai/dsh-session": "0.2.0-rc.1",
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.1"

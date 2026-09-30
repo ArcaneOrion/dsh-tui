@@ -12,11 +12,13 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, assembleContextFor } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { applySessionEvent, applyStreamFrame, replay } from './projection.js'
+import { activeAtToken, formatFileMention } from '@deepseek-ai/dsh-file-reference'
+import { applySessionEvent, applyStreamFrame, replay, textOfContent } from './projection.js'
 import { readSessionEvents } from './session-events.js'
+import { parseModelRefCandidates } from './model-catalog.js'
 
 /**
  * 决定本次会话的模型路由。
@@ -62,6 +64,75 @@ export function resolveSelection(ctx, startup) {
 }
 
 /**
+ * 启动路径的模型路由解析：**只在存在歧义时**才向 llm 目录求证。
+ *
+ * 背景（实机事故）：provider id 可以含斜杠（`roundrobin/<组id>` 虚拟路由），
+ * 单纯的「第一个斜杠拆分」会把 `roundrobin/round-glm-5-3f/round-glm-5-3f`
+ * 读成 provider=`roundrobin`，于是首次请求报
+ * `NO_ADAPTER: no adapter registered for provider "roundrobin"`。
+ * 记住的偏好与 `--model` 都走这条路径，所以必须在**建 agent 之前**裁决。
+ *
+ * 为什么不总是校验：
+ * - 无歧义的普通 ref（`my-opencode-go/deepseek-v4.1-flash`）保持原行为——
+ *   零延迟，也避免启动早期适配器尚未注册时的误判；
+ * - 有歧义时才等目录就绪（有界），再逐个候选试 `resolveCallConfig`。
+ *
+ * @param {object} ctx
+ * @param {object} startup
+ * @returns {Promise<{provider:string,model:string,reasoningEffort?:string}|undefined>}
+ */
+export async function resolveSelectionValidated(ctx, startup) {
+  const override = typeof startup?.model === 'string' ? startup.model.trim() : ''
+  const candidates = override === '' ? [] : parseModelRefCandidates(override)
+  if (candidates.length <= 1) return resolveSelection(ctx, startup)
+
+  const llm = ctx.get?.('llm')
+  if (llm === undefined || typeof llm.resolveCallConfig !== 'function') return candidates[0]
+
+  // 等适配器注册（有界）：llm-pi-ai 的渠道是设置驱动、异步注册的。
+  const deadline = Date.now() + 5000
+  let ready = false
+  while (Date.now() < deadline) {
+    try {
+      const providers = typeof llm.listProviders === 'function' ? llm.listProviders() : []
+      if (Array.isArray(providers) && providers.length > 0) {
+        ready = true
+        break
+      }
+    } catch {
+      // 注册表读不到不算致命，继续等。
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200).unref?.())
+  }
+  // 目录始终没起来：交回未校验的约定读法（请求期会给出真实错误）。
+  if (!ready) return candidates[0]
+
+  const effort =
+    typeof startup?.reasoningEffort === 'string' && startup.reasoningEffort !== '' ? startup.reasoningEffort : undefined
+  let lastError
+  for (const candidate of candidates) {
+    try {
+      const resolved = await llm.resolveCallConfig({
+        provider: candidate.provider,
+        model: candidate.model,
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+      })
+      return {
+        provider: resolved.provider,
+        model: resolved.model,
+        ...(resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort }),
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+  // 所有拆分都无效：抛错，让调用方走「忘掉坏偏好并重试一次」的既有路径。
+  throw new Error(
+    `无法解析模型路由 "${override}"（试过 ${candidates.length} 种 provider/model 拆分）：${lastError?.message ?? lastError}`,
+  )
+}
+
+/**
  * 解析工具参数。
  *
  * 模型流式生成时 `arguments` 可能还不是合法 JSON；那时不解析，让工具的
@@ -98,7 +169,7 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
    * `current` at every next step, so /model can take effect without destroying
    * the live agent or its session history.
    */
-  const selectionRef = { current: resolveSelection(ctx, startup), assembled: undefined }
+  const selectionRef = { current: await resolveSelectionValidated(ctx, startup), assembled: undefined }
   const presetService = ctx.get('agentPresets')
   const projectionService = ctx.get('sessionProjections')
   let selectedPreset
@@ -253,15 +324,15 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
   // dsh 的工具通过 `presentCall` / `presentResult` 声明一种与提供方无关的卡片
   // 类型（generic/terminal/diff/search/read/web），所以**新工具装上就自带合适的
   // 卡片**，这里不需要维护一张工具名→卡片的表。
-  const toolsService = ctx.get('tools')
+  const toolsService = agent.ctx?.get?.('tools') ?? ctx.get('tools')
   const present = {
     call(toolName, rawArgs) {
-      const definition = toolsService?.get?.(toolName)
+      const definition = toolsService?.get?.(toolName, assembleContextFor(agent).scope)
       if (typeof definition?.presentCall !== 'function') return undefined
       return definition.presentCall(parseToolArgs(rawArgs))
     },
     result(toolName, rawArgs, resultData) {
-      const definition = toolsService?.get?.(toolName)
+      const definition = toolsService?.get?.(toolName, assembleContextFor(agent).scope)
       if (typeof definition?.presentResult !== 'function') return undefined
       return definition.presentResult(parseToolArgs(rawArgs), {
         content: resultData?.message?.content ?? [],
@@ -327,11 +398,13 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
    * `return`，而调用方也没有 catch——用户看到的就是「回车没反应，没有任何
    * 报错」。静默失败比报错难查一百倍。
    */
-  function submit(text) {
+  function submit(text, { delivery = 'followup' } = {}) {
     if (agent === undefined) {
       throw new Error('会话还没建立，无法提交（agent is undefined）')
     }
-    agent.followup(
+    if (!['followup', 'steer', 'inject'].includes(delivery)) throw new Error('无法识别的输入方式')
+    if (typeof agent[delivery] !== 'function') throw new Error(`当前内核不支持 ${delivery}`)
+    agent[delivery](
       createUserMessage({
         content: [{ type: 'text', text }],
         source: { kind: 'user' },
@@ -387,6 +460,21 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
     interrupt,
     flush,
     dispose,
+    runtime: createRuntimeAccess(ctx, () => agent),
+    ownsAgent(candidate) {
+      if (candidate === agent) return true
+      const registry = ctx.get('agents')
+      if (!candidate || !registry?.isOwnedBy) return false
+      const all = registry.list()
+      const owned = new Set([agent])
+      for (let changed = true; changed;) {
+        changed = false
+        for (const child of all) {
+          if (!owned.has(child) && [...owned].some((parent) => registry.isOwnedBy(child.id, parent))) { owned.add(child); changed = true }
+        }
+      }
+      return owned.has(candidate)
+    },
     get agent() {
       return agent
     },
@@ -449,5 +537,63 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
       onUpdate?.()
       return selected
     },
+  }
+}
+
+/** Read-only inspection plus explicit inbox operations over the native Agent. */
+export function createRuntimeAccess(ctx, getAgent) {
+  const agent = () => {
+    const current = getAgent()
+    if (!current) throw new Error('当前会话已关闭')
+    return current
+  }
+  return {
+    snapshot() {
+      const current = agent()
+      return { status: current.status,
+        queued: current.inbox?.nextTurn?.length ?? 0,
+        steering: current.inbox?.nextStep?.length ?? 0,
+        sessionId: String(current.session.id), cwd: current.session.header?.cwd }
+    },
+    context() {
+      const session = agent().session
+      if (typeof session.deriveMessages !== 'function') throw new Error('内核未提供上下文读取能力')
+      return session.deriveMessages().map((message, index) => ({
+        id: String(message.id ?? index), role: message.role, source: message.source,
+        text: message.content.map((block) => {
+          if (block.type === 'text' || block.type === 'reasoning') return block.text ?? ''
+          if (block.type === 'tool-call') return `[工具调用 ${block.name}]\n${typeof block.arguments === 'string' ? block.arguments : JSON.stringify(block.arguments)}`
+          return `[${block.type}]`
+        }).join('\n'),
+      }))
+    },
+    tools() {
+      const current = agent()
+      const header = current.session.requestHeader?.()
+      if (header) return { ready: true, source: '最近请求', tools: header.tools ?? [] }
+      const service = current.ctx?.get?.('tools') ?? ctx.get('tools')
+      if (typeof service?.schemas === 'function') return { ready: true, source: '当前作用域', tools: service.schemas(assembleContextFor(current).scope) }
+      return { ready: false, tools: [] }
+    },
+    queue() {
+      const inbox = agent().inbox
+      return [['next-step', inbox?.nextStep], ['next-turn', inbox?.nextTurn]].flatMap(([target, messages]) =>
+        (messages ?? []).map((message) => ({ id: message.id, target, text: textOfContent(message.content) })))
+    },
+    removeQueued(id) { return agent().inbox?.remove?.(id) === true },
+    async children(signal) {
+      const parent = agent()
+      const service = ctx.get('subagents')
+      if (typeof service?.listChildren !== 'function') throw new Error('当前运行时未启用子 Agent 目录')
+      const rows = await service.listChildren(parent.session.id, signal)
+      return rows.map((row) => ({ ...row, status: ctx.get('agents')?.get?.(row.id)?.status ?? 'inactive' }))
+    },
+    async files(query, signal) {
+      const service = ctx.get('fileReferences')
+      if (typeof service?.list !== 'function') return undefined
+      return service.list(agent(), query, signal)
+    },
+    parseMention: activeAtToken,
+    formatMention: formatFileMention,
   }
 }

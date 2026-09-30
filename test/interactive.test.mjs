@@ -164,7 +164,7 @@ test('提问：有选项时返回选中的 label（契约要求 label，不是 v
     nextReturning({ answers: [] }),
   )
   assert.deepEqual(answer, { answers: [{ id: 'q1', selected: ['选项 A'] }] })
-  assert.equal(seenOptions.length, 2)
+  assert.equal(seenOptions.length, 3)
 })
 
 test('提问：没有选项时走自由文本，放进 custom', async () => {
@@ -335,4 +335,36 @@ test('卸载后两个 waterfall 都不再被认领', () => {
   assert.equal(handlers.size, 2)
   uninstall()
   assert.equal(handlers.size, 0)
+})
+
+test('多选问题按 label 返回多项，不把 UI 索引交给内核', async () => {
+  const { ctx, handlers } = makeCtx()
+  const picks = ['0', '1', 'submit']
+  installInteractive({ ctx, app: { choose: async () => picks.shift(), notice() {} } })
+  const answer = await handlers.get('user-questions/request')({ questions: [{ id: 'q', question: '选哪些？', multiSelect: true,
+    options: [{ label: 'A' }, { label: 'B' }] }] }, nextReturning(undefined))
+  assert.deepEqual(answer, { answers: [{ id: 'q', selected: ['A', 'B'] }] })
+})
+
+test('长计划先打开完整文档，再进入明确决策', async () => {
+  const { ctx, handlers } = makeCtx()
+  const order = []
+  const detail = '# 计划\n' + '详细步骤\n'.repeat(100)
+  installInteractive({ ctx, app: {
+    document: async (spec) => { order.push('document'); assert.equal(spec.text, detail); return true },
+    choose: async () => { order.push('choice'); return '批准' }, notice() {},
+  } })
+  const answer = await handlers.get('user-questions/request')({ questions: [{ id: 'plan', question: '是否实施？', detail,
+    options: [{ label: '批准' }, { label: '拒绝' }], intent: { kind: 'plan-review', approve: '批准' } }] }, nextReturning(undefined))
+  assert.deepEqual(order, ['document', 'choice'])
+  assert.deepEqual(answer.answers[0].selected, ['批准'])
+})
+
+test('非本 TUI 所有的 Agent 请求交给其他应答者', async () => {
+  const { ctx, handlers } = makeCtx()
+  let shown = false
+  installInteractive({ ctx, ownsAgent: () => false, app: { choose() { shown = true } } })
+  const outcome = await handlers.get('approval/request')({ agent: {}, toolName: 'test' }, nextReturning('other'))
+  assert.equal(outcome, 'other')
+  assert.equal(shown, false)
 })

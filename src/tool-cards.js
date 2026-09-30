@@ -11,7 +11,8 @@
  * 认不出的卡片类型一律退回原文渲染——**宁可朴素，不可编造**。
  */
 
-import { Box, Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { rail } from './layout.js'
 
 /** 卡片类型的图标。认不出的用 · 。 */
 const KIND_ICON = {
@@ -295,8 +296,7 @@ export class ToolCard extends Container {
           ? theme.fg('error', '失败')
           : theme.fg('success', '完成')
 
-    const bgToken = row.done !== true ? 'toolPendingBg' : row.isError === true ? 'toolErrorBg' : 'toolSuccessBg'
-    const box = new Box(1, 1, (content) => theme.bg(bgToken, content))
+    const box = new Container()
 
     const callLines = renderCallView(row.callView, theme)
     if (callLines.length === 0) {
@@ -304,18 +304,25 @@ export class ToolCard extends Container {
       box.addChild(new Text(theme.fg('toolTitle', `▸ ${row.toolName ?? 'tool'}`) + '  ' + status, 0, 0))
     } else {
       box.addChild(new Text(callLines[0] + '  ' + status, 0, 0))
-      for (const line of callLines.slice(1)) box.addChild(new Text(line, 0, 0))
+      for (const line of callLines.slice(1, 5)) box.addChild(new Text(line, 0, 0))
     }
 
-    for (const line of renderResultView(row.resultView, row.text, theme, { isError: row.isError === true })) {
+    const resultLines = renderResultView(row.resultView, row.text, theme, { isError: row.isError === true })
+    for (const line of resultLines.slice(0, 7)) {
       box.addChild(new Text(line, 0, 0))
+    }
+    const truncated = resultLines.length > 7 || callLines.length > 5 || resultLines.some((line) => /另有|省略/.test(line))
+    if (truncated) {
+      const rawLines = String(row.text ?? '').split('\n').length
+      const detail = rawLines > 12 ? ` · 另有 ${rawLines - 12} 行` : ''
+      box.addChild(new Text(theme.fg('dim', `  … /inspect 查看完整调用与结果${detail}`), 0, 0))
     }
 
     if (typeof row.errorReason === 'string' && row.errorReason !== '') {
       box.addChild(new Text(theme.fg('error', '  ' + row.errorReason), 0, 0))
     }
 
-    this.addChild(box)
+    this.addChild(rail(box, theme, { tone: row.isError ? 'error' : row.done ? 'border' : 'accent' }))
   }
 }
 

@@ -1,0 +1,57 @@
+{
+  "baselineCommit": "9f778a0797bad8b9a0f4ef605b96b3e9f3ba3358",
+  "node": "v24.14.0",
+  "baseline": {
+    "historyRows": 1000,
+    "updates": 20,
+    "initialHistoryRenders": 1000,
+    "subsequentHistoryRenders": 20000,
+    "elapsedMs": 15.33
+  },
+  "firstVersion": {
+    "historyRows": 1000,
+    "updates": 20,
+    "initialHistoryRenders": 1000,
+    "subsequentHistoryRenders": 0,
+    "elapsedMs": 9.68
+  },
+  "scenes": [
+    {
+      "id": "before",
+      "width": 100,
+      "renderedLines": 37,
+      "overflow": 0
+    },
+    {
+      "id": "after",
+      "width": 100,
+      "renderedLines": 30,
+      "overflow": 0
+    },
+    {
+      "id": "narrow",
+      "width": 48,
+      "renderedLines": 35,
+      "overflow": 0
+    },
+    {
+      "id": "welcome",
+      "width": 100,
+      "renderedLines": 12,
+      "overflow": 0
+    },
+    {
+      "id": "workbench",
+      "width": 84,
+      "renderedLines": 16,
+      "overflow": 0
+    },
+    {
+      "id": "context",
+      "width": 84,
+      "renderedLines": 24,
+      "overflow": 0
+    }
+  ],
+  "note": "Fixed invented fixtures; no live model calls. Timing is one local sample, not a cross-machine performance score. Baseline is HEAD, excluding pre-existing uncommitted model-routing edits."
+}

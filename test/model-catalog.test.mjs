@@ -14,6 +14,7 @@ import {
   modelOptions,
   modelRef,
   parseModelRef,
+  parseModelRefCandidates,
   providerOptions,
   reasoningOptions,
 } from '../src/model-catalog.js'
@@ -45,6 +46,42 @@ test('parseModelRef：非法形式返回 undefined', () => {
 
 test('parseModelRef：两端空白被修剪', () => {
   assert.deepEqual(parseModelRef('  p / m '), { provider: 'p', model: 'm' })
+})
+
+// ── parseModelRefCandidates（含斜杠 provider id 的裁决候选）────────────────
+
+test('候选：单斜杠只有一种拆分', () => {
+  assert.deepEqual(parseModelRefCandidates('p/m'), [{ provider: 'p', model: 'm' }])
+})
+
+test('候选：provider 含斜杠时给出全部拆分，第一斜杠优先', () => {
+  // 这是实机事故的形状：记住的 roundrobin 组被「第一个斜杠」读成 provider=roundrobin。
+  assert.deepEqual(parseModelRefCandidates('roundrobin/round-glm-5-3f/round-glm-5-3f'), [
+    { provider: 'roundrobin', model: 'round-glm-5-3f/round-glm-5-3f' },
+    { provider: 'roundrobin/round-glm-5-3f', model: 'round-glm-5-3f' },
+  ])
+})
+
+test('候选：模型 id 含斜杠时同样给出两种，交由目录裁决', () => {
+  assert.deepEqual(parseModelRefCandidates('openrouter/z-ai/glm-5.2:free'), [
+    { provider: 'openrouter', model: 'z-ai/glm-5.2:free' },
+    { provider: 'openrouter/z-ai', model: 'glm-5.2:free' },
+  ])
+})
+
+test('候选：非法与空输入给空数组，不产出半截候选', () => {
+  assert.deepEqual(parseModelRefCandidates('no-slash'), [])
+  assert.deepEqual(parseModelRefCandidates('/leading'), [])
+  assert.deepEqual(parseModelRefCandidates('trailing/'), [])
+  assert.deepEqual(parseModelRefCandidates('a//b'), [])
+  assert.deepEqual(parseModelRefCandidates(undefined), [])
+  assert.deepEqual(parseModelRefCandidates(42), [])
+})
+
+test('候选：parseModelRef 恒等于第一个候选（文档约定不变）', () => {
+  for (const ref of ['p/m', 'openrouter/z-ai/glm-5.2:free', 'roundrobin/g/g']) {
+    assert.deepEqual(parseModelRef(ref), parseModelRefCandidates(ref)[0])
+  }
 })
 
 test('modelRef：从 selection 拼回 provider/model', () => {

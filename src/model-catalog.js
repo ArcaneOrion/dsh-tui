@@ -12,14 +12,41 @@
 /** @typedef {{provider:string, model:string, reasoningEffort?:string}} ModelSelection */
 
 export function parseModelRef(value) {
-  if (typeof value !== 'string') return undefined
+  return parseModelRefCandidates(value)[0]
+}
+
+/**
+ * 把 `provider/model` 文本解析成**全部可能的拆分**（每个斜杠位置一种）。
+ *
+ * 为什么需要多个候选：provider id 本身可能含斜杠（`roundrobin/<组id>` 这类
+ * 虚拟路由）。`roundrobin/round-glm-5-3f/round-glm-5-3f` 既可能被读成
+ * provider=`roundrobin`，也可能被读成 provider=`roundrobin/round-glm-5-3f`。
+ * 文本本身没有答案——**只有 llm 目录能裁决**，所以这里只生成候选，
+ * 由调用方逐个交给 `resolveCallConfig` 试。
+ *
+ * 顺序：从第一个斜杠开始（这是 `provider/model` 的文档约定，也是无歧义
+ * 输入如 `openrouter/z-ai/glm-5.2:free` 的正确读法）。
+ *
+ * @param {unknown} value
+ * @returns {Array<{provider:string, model:string}>}
+ */
+export function parseModelRefCandidates(value) {
+  if (typeof value !== 'string') return []
   const raw = value.trim()
-  const slash = raw.indexOf('/')
-  if (slash <= 0 || slash >= raw.length - 1) return undefined
-  const provider = raw.slice(0, slash).trim()
-  const model = raw.slice(slash + 1).trim()
-  if (provider === '' || model === '') return undefined
-  return { provider, model }
+  if (raw === '') return []
+  const candidates = []
+  let index = raw.indexOf('/')
+  while (index !== -1) {
+    const provider = raw.slice(0, index).trim()
+    const model = raw.slice(index + 1).trim()
+    // 排除空段与「半个斜杠」的垃圾拆分（`a//b`、`a/`、`/b`）——
+    // 它们不可能是真实 provider/model，喂给目录只是噪声。
+    if (provider !== '' && model !== '' && !provider.endsWith('/') && !model.startsWith('/')) {
+      candidates.push({ provider, model })
+    }
+    index = raw.indexOf('/', index + 1)
+  }
+  return candidates
 }
 
 export function modelRef(selection) {

@@ -80,7 +80,7 @@ function withAbort(start, signal, fallback, cancelPrompt) {
  *
  * @returns {Promise<{id:string, selected:string[], custom?:string}|undefined>} undefined 表示用户取消
  */
-async function askOne(app, question) {
+async function askOne(app, question, signal) {
   const options = Array.isArray(question.options) ? question.options : []
   const detail = typeof question.detail === 'string' && question.detail !== '' ? question.detail : undefined
   const title =
@@ -88,22 +88,55 @@ async function askOne(app, question) {
       ? `${question.header} · ${question.question}`
       : String(question.question ?? '')
 
+  const needsDocument = detail && (question.intent?.kind === 'plan-review' || detail.length > 240)
+  if (needsDocument && app.document) {
+    const reviewed = await app.document({ title: '审阅计划 · Esc 返回决策', text: detail, signal })
+    if (reviewed === undefined || signal?.aborted) return undefined
+  }
+
+  if (question.multiSelect && options.length) {
+    const selected = new Set()
+    for (;;) {
+      const action = await app.choose({ title, signal,
+        detail: `已选 ${selected.size} 项 · 选择条目切换勾选`, options: [
+          ...options.map((option, index) => ({ value: String(index), label: `${selected.has(index) ? '✓' : '○'} ${option.label}`, description: option.description })),
+          { value: 'submit', label: '提交选择' }, { value: 'custom', label: '补充文字并提交' },
+        ] })
+      if (action === undefined) return undefined
+      if (action === 'submit' && selected.size) return { id: question.id, selected: [...selected].map((index) => options[index].label) }
+      if (action === 'custom') {
+        const custom = await app.askText({ title: '补充回答', signal })
+        if (custom === undefined) return undefined
+        return { id: question.id, selected: [...selected].map((index) => options[index].label), custom }
+      }
+      const index = Number(action)
+      if (Number.isInteger(index) && options[index]) { if (selected.has(index)) selected.delete(index); else selected.add(index) }
+    }
+  }
+
   if (options.length > 0) {
+    let customValue = '__custom__'
+    while (options.some((option) => option.label === customValue)) customValue += '_'
     const picked = await app.choose({
       title,
-      detail,
-      options: options.map((option) => ({
+      detail: needsDocument && app.document ? '详情已展示，请选择回答。' : detail,
+      signal,
+      options: [...options.map((option) => ({
         value: String(option.label),
         label: String(option.label),
         description: option.description,
-      })),
+      })), { value: customValue, label: '自定义回答…' }],
     })
     if (picked === undefined) return undefined
+    if (picked === customValue) {
+      const custom = await app.askText({ title: '自定义回答', signal })
+      return custom === undefined ? undefined : { id: question.id, selected: [], custom }
+    }
     // 契约要求 selected 里放**选项 label**，不是 value。
     return { id: question.id, selected: [picked] }
   }
 
-  const text = await app.askText({ title, detail })
+  const text = await app.askText({ title, detail, signal })
   if (text === undefined) return undefined
   return { id: question.id, selected: [], custom: text }
 }
@@ -117,14 +150,14 @@ async function askOne(app, question) {
  * @param {()=>boolean} [options.isAvailable] - 界面此刻能不能提问（正在退出时为 false）
  * @returns {() => void} 卸载
  */
-export function installInteractive({ ctx, app, isAvailable = () => true }) {
+export function installInteractive({ ctx, app, isAvailable = () => true, ownsAgent = () => true, approvalDetail }) {
   const disposers = []
 
   // ── 工具授权 ────────────────────────────────────────────────────────────
 
   disposers.push(
     ctx.on('approval/request', async (request, next) => {
-      if (!isAvailable()) return next()
+      if (!isAvailable() || !ownsAgent(request?.agent)) return next()
 
       const toolName = String(request?.toolName ?? 'tool')
       // displayReason 是本地化展示用；优先中文，其次英文，最后用 asker 给的 reason。
@@ -132,23 +165,32 @@ export function installInteractive({ ctx, app, isAvailable = () => true }) {
         request?.displayReason?.zh ?? request?.displayReason?.en ?? request?.reason ?? undefined
 
       const notice = `需要授权：${toolName}`
+      const fullDetail = approvalDetail?.(request)
 
       let choice
       try {
         choice = await withAbort(
-          () =>
-            app.choose({
+          async () => {
+            for (;;) {
+              const picked = await app.choose({
               title: `允许执行 ${toolName} ？`,
               detail: typeof reason === 'string' ? reason : undefined,
+              signal: request?.signal,
               options: [
                 { value: 'allowed-once', label: '允许一次', description: '只批准这一次调用' },
                 { value: 'rejected', label: '拒绝', description: '本次调用失败，模型会看到拒绝' },
+                ...(fullDetail && app.document ? [{ value: 'detail', label: '查看完整调用', description: '执行参数与授权原因' }] : []),
               ],
-            }),
+              })
+              if (picked !== 'detail') return picked
+              await app.document({ title: '授权 · 完整调用', text: fullDetail, signal: request?.signal })
+              if (request?.signal?.aborted) return 'cancelled'
+            }
+          },
           request?.signal,
           'cancelled',
           // 撤掉已经弹出来的框，否则它会变成吃按键的僵尸模态框。
-          () => app.cancelPrompts?.(),
+          () => { if (!app.supportsPromptSignals) app.cancelPrompts?.() },
         )
       } catch {
         // 弹不出来就交回链上，按内核自己的策略（通常是 unavailable）处理。
@@ -168,7 +210,7 @@ export function installInteractive({ ctx, app, isAvailable = () => true }) {
 
   disposers.push(
     ctx.on('user-questions/request', async (request, next) => {
-      if (!isAvailable()) return next()
+      if (!isAvailable() || !ownsAgent(request?.agent)) return next()
 
       const questions = Array.isArray(request?.questions) ? request.questions : []
       if (questions.length === 0) return next()
@@ -178,10 +220,10 @@ export function installInteractive({ ctx, app, isAvailable = () => true }) {
         let answer
         try {
           answer = await withAbort(
-            () => askOne(app, question),
+            () => askOne(app, question, request?.signal),
             request?.signal,
             undefined,
-            () => app.cancelPrompts?.(),
+            () => { if (!app.supportsPromptSignals) app.cancelPrompts?.() },
           )
         } catch {
           return next()

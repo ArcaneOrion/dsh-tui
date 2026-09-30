@@ -10,9 +10,10 @@
  * 其中 Component 只需要满足 pi-tui 的 `{ render(width), invalidate() }`。
  */
 
-import { Box, Container, Markdown, Text } from '@earendil-works/pi-tui'
+import { Container, Markdown, Text } from '@earendil-works/pi-tui'
 import { infoRenderer } from './startup-info.js'
 import { ToolCard } from './tool-cards.js'
+import { rail, fit } from './layout.js'
 
 // ── 各角色默认渲染器 ─────────────────────────────────────────────────────
 
@@ -24,11 +25,9 @@ import { ToolCard } from './tool-cards.js'
  * 专门的 token。
  */
 export function userRenderer({ row, theme }) {
-  const box = new Box(1, 1, (content) => theme.bg('userMessageBg', content))
-  box.addChild(
-    new Markdown(row.text, 0, 0, theme.markdown, { color: (content) => theme.fg('userMessageText', content) }),
-  )
-  return box
+  return rail(new Markdown(row.text, 0, 0, theme.markdown, { color: (text) => theme.fg('userMessageText', text) }), theme, {
+    tone: 'accent', label: theme.fg('accent', theme.bold(row.sourceKind === 'context' ? '上下文' : '你')),
+  })
 }
 
 /**
@@ -37,7 +36,7 @@ export function userRenderer({ row, theme }) {
  * 对齐 pi 的 `AssistantMessageComponent`：正文**不铺底色**（方便复制），
  * 只有思考块用 `thinkingText` + 斜体。
  */
-export function assistantRenderer({ row, theme }) {
+export function assistantRenderer({ row, theme, registry }) {
   const container = new Container()
   const hasText = typeof row.text === 'string' && row.text.trim() !== ''
   const hasThinking = typeof row.reasoning === 'string' && row.reasoning.trim() !== ''
@@ -46,8 +45,10 @@ export function assistantRenderer({ row, theme }) {
     // pi 的隐藏思考块是一行斜体标签；这里保持一致，但把行数也带上，
     // 让人知道折叠了多少（pi 没带，这是本地的一点增益）。
     const lines = row.reasoning.trim().split('\n').length
-    const label = lines > 1 ? `Thinking… (${lines} 行，已折叠)` : 'Thinking…'
-    container.addChild(new Text(theme.italic(theme.fg('thinkingText', label)), 1, 0))
+    const expanded = registry?.display?.thinking === true
+    const label = expanded ? `思考 · ${lines} 行` : `思考 · ${lines} 行已折叠  /thinking 展开`
+    container.addChild(new Text(theme.fg('thinkingText', label), 1, 0))
+    if (expanded) container.addChild(new Markdown(row.reasoning, 1, 0, theme.markdown))
   }
 
   if (hasText) {
@@ -58,7 +59,12 @@ export function assistantRenderer({ row, theme }) {
   if (row.interrupted === true) {
     container.addChild(new Text(theme.fg('warning', '（本回合被中断，以上为已生成部分）'), 1, 0))
   }
-  return container
+  return {
+    invalidate: () => container.invalidate(),
+    render(width) {
+      return [fit(theme.fg('accent', ' DSH') + theme.fg('dim', row.done === false ? '  ·  正在回应' : ''), width), ...container.render(width)]
+    },
+  }
 }
 
 /** 推理片段（独立角色时使用）。 */
@@ -97,6 +103,11 @@ export function noticeRenderer({ row, theme }) {
   return new Text(theme.fg('dim', '· ' + row.text), 1, 0)
 }
 
+export function contextRenderer({ row, theme }) {
+  const label = row.title || row.source?.form || '上下文'
+  return new Text(theme.fg('dim', ` ◇ ${label} · 已加入上下文  /context 查看`), 0, 0)
+}
+
 /**
  * 把默认渲染器安装到注册表。
  * @param {object} registry - createRegistry() 的产物
@@ -112,6 +123,7 @@ export function installDefaultRenderers(registry) {
     registry.setMessageRenderer('warn', warnRenderer),
     registry.setMessageRenderer('error', errorRenderer),
     registry.setMessageRenderer('info', infoRenderer),
+    registry.setMessageRenderer('context', contextRenderer),
     // 兜底：未知角色按提示行渲染，永不崩。
     registry.setMessageRenderer('*', noticeRenderer),
   ]

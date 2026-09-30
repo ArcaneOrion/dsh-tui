@@ -10,6 +10,7 @@
  */
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { pair } from './layout.js'
 
 /** 鲸鱼（5 行）。用占位符标出两段用色，渲染时再替换。 */
 const WHALE = [
@@ -57,15 +58,18 @@ export function bannerLines(width) {
  * @param {object} options.theme
  * @param {()=>string|undefined} [options.getSubtitle] - 副标题（版本/模型等）
  */
-export function createBanner({ theme, getSubtitle }) {
+export function createBanner({ theme, getSubtitle, getWorkspace, getPreset }) {
   return {
     render(width) {
-      const { lines } = bannerLines(width)
-      const out = lines.map((line) => theme.fg('accent', truncateToWidth(line, width)))
+      const identity = theme.fg('accent', theme.bold(' DSH')) + theme.fg('muted', '  /  FIELDNOTES')
+      const out = [pair(identity, theme.fg('dim', getPreset?.() ?? ''), width)]
       const subtitle = getSubtitle?.()
       if (typeof subtitle === 'string' && subtitle !== '') {
         out.push(theme.fg('dim', truncateToWidth(' ' + subtitle, width)))
       }
+      const workspace = getWorkspace?.()
+      if (workspace) out.push(theme.fg('muted', truncateToWidth(' ' + workspace, width)))
+      out.push('')
       return out
     },
     invalidate() {

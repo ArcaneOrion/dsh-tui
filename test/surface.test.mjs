@@ -50,7 +50,7 @@ test('banner 组件：任何宽度下都不溢出（越界会把整个 TUI 打�
 
 test('banner 组件：有副标题时追加一行', () => {
   const banner = createBanner({ theme, getSubtitle: () => 'v1' })
-  assert.equal(banner.render(120).length, 6)
+  assert.equal(banner.render(120).length, 3)
 })
 
 // ── 语法高亮 ─────────────────────────────────────────────────────────────

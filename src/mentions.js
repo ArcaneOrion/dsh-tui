@@ -184,6 +184,36 @@ export function createMentionAutocomplete({ listFiles }) {
   }
 }
 
+/** Native scoped path discovery, including quoted names and directory descent. */
+export function createNativeMentionAutocomplete({ runtime, fallback }) {
+  let controller
+  return {
+    triggerCharacters: ['@'],
+    async getSuggestions(lines, cursorLine, cursorCol) {
+      const token = runtime.parseMention(lines[cursorLine] ?? '', cursorCol)
+      controller?.abort()
+      if (!token) return null
+      const current = new AbortController()
+      controller = current
+      let candidates
+      try { candidates = await runtime.files(token.query, current.signal) }
+      catch { return null }
+      if (current.signal.aborted) return null
+      if (candidates === undefined) return fallback?.getSuggestions(lines, cursorLine, cursorCol) ?? null
+      const items = candidates.map((candidate) => ({ value: runtime.formatMention(candidate, token.quoted),
+        label: candidate.path, description: candidate.kind === 'directory' ? '目录' : '文件引用' })).filter((item) => item.value)
+      return items.length ? { items, prefix: token.prefix } : null
+    },
+    applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      const next = [...lines]
+      const line = next[cursorLine] ?? ''
+      const start = Math.max(0, cursorCol - prefix.length)
+      next[cursorLine] = line.slice(0, start) + item.value + line.slice(cursorCol)
+      return { lines: next, cursorLine, cursorCol: start + item.value.length }
+    },
+  }
+}
+
 /**
  * 把两个 autocomplete provider 合成一个：命令走行首 `/`，文件引用走 `@`。
  * pi-tui 的 Editor 只接受一个 provider，所以自己分派。

@@ -138,7 +138,7 @@ test('结果卡：terminal 显示输出与退出码，非零码用错误色', ()
 
   const bad = renderResultView({ card: 'terminal', output: 'boom', exitCode: 1 }, '', theme)
   assert.match(plain(bad), /exit 1/)
-  assert.match(bad.join('\n'), /\x1b\[38;2;247;118;142m/) // error 色
+  assert.ok(bad.join('\n').includes(theme.fg('error', '  exit 1')))
 })
 
 test('结果卡：terminal 被信号杀掉时说明信号', () => {

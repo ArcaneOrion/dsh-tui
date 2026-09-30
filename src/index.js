@@ -23,10 +23,9 @@ import { createFooterInfo } from './footer.js'
 import { HostMode, resolveHostMode } from './host.js'
 import { installInteractive } from './interactive.js'
 import { logTerminalState, tapStdin } from './keylog.js'
-import { combineAutocomplete, createFileIndex, createMentionAutocomplete } from './mentions.js'
+import { combineAutocomplete, createFileIndex, createMentionAutocomplete, createNativeMentionAutocomplete } from './mentions.js'
 import { createPrefs } from './prefs.js'
-import { loadModelCatalog, modelOptions, providerOptions, reasoningOptions } from './model-catalog.js'
-import { collectStartupSections } from './startup-info.js'
+import { loadModelCatalog, modelOptions, parseModelRefCandidates, providerOptions, reasoningOptions } from './model-catalog.js'
 
 const pkg = createRequire(import.meta.url)('../package.json')
 import { createKernel } from './kernel.js'
@@ -34,6 +33,7 @@ import { installDefaultRenderers } from './messages.js'
 import { applySessionEvent, createView } from './projection.js'
 import { createRegistry } from './registry.js'
 import { createTheme } from './theme.js'
+import { createWorkbench } from './workbench.js'
 
 /** 稳定的 Cordis 插件名。 */
 export const name = 'dsh-tui'
@@ -76,7 +76,7 @@ export async function apply(ctx) {
   const prefs = createPrefs()
   const saved = prefs.read()
   // 命令行显式给的 --model 永远优先于记住的。
-  const appliedSavedModel = startup.model === undefined && typeof saved.model === 'string' && saved.model.includes('/')
+  const appliedSavedModel = startup.resume === undefined && startup.model === undefined && typeof saved.model === 'string' && saved.model.includes('/')
   const effectiveStartup = appliedSavedModel ? { ...startup, model: saved.model } : startup
 
   const theme = createTheme()
@@ -86,6 +86,7 @@ export async function apply(ctx) {
 
   /** @type {ReturnType<typeof createApp> | undefined} */
   let app
+  let workbench
 
   // ── 内核桥 ────────────────────────────────────────────────────────────
 
@@ -256,18 +257,20 @@ export async function apply(ctx) {
     try {
       const info = await ctx.get('llm')?.resolveModelInfo?.(provider, model)
       const efforts = reasoningOptions(info)
-      if (efforts.length > 0) reasoningEffort = await app.choose({ title: '选择推理强度', options: efforts })
-      // 取消推理强度选择只取消该层，不取消模型选择；undefined 表示 provider 默认。
+      if (efforts.length > 0) {
+        reasoningEffort = await app.choose({ title: '选择推理强度', options: efforts })
+        if (reasoningEffort === undefined) return
+      }
     } catch (error) {
       app?.notice?.(`模型元数据读取失败，将使用提供方默认推理强度：${error?.message ?? error}`)
     }
     try {
       const selected = await kernel.selectModel({ provider, model, reasoningEffort })
       modelLabel = `${selected.provider}/${selected.model}`
-      prefs.write({ model: modelLabel })
+      const savedPreference = prefs.write({ model: modelLabel })
       app?.notice?.(
         `已切换模型：${modelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}` +
-          `\n下一步请求生效，当前正在运行的请求不变。${selected.defaultSaved === false ? `\n（注意：默认值保存失败，重开后会回到原默认——${prefs.file}）` : ''}`,
+          `\n下一步请求生效。${selected.defaultSaved === false || !savedPreference.ok ? '\n默认偏好未完整保存。' : ''}`,
       )
       app?.requestRender?.()
     } catch (error) {
@@ -310,13 +313,15 @@ export async function apply(ctx) {
     ctx,
     getAgent: () => kernel.agent,
     getSelection: () => kernel.selection,
+    onUpdate: () => app?.requestRender(),
   })
 
   // 斜杠命令：本地命令自己处理，其余交给内核的注册表。
   const commandSystem = createCommandSystem({ ctx, getAgent: () => kernel.agent })
 
   // 补全：命令走 `/`，文件引用走 `@`。
-  const mentionAutocomplete = createMentionAutocomplete({ listFiles: createFileIndex(process.cwd()) })
+  const mentionAutocomplete = createNativeMentionAutocomplete({ runtime: kernel.runtime,
+    fallback: createMentionAutocomplete({ listFiles: createFileIndex(process.cwd(), { warm: false }) }) })
 
   /** 自检报告：直接回答「哪些内核服务接上了、哪些没有」。 */
   function doctorReport() {
@@ -350,6 +355,7 @@ export async function apply(ctx) {
   async function runCommand(line) {
     const parsed = parseCommandLine(line)
     if (parsed === undefined) return
+    if (await workbench?.execute(parsed.name, parsed.rest)) return
 
     if (commandSystem.isLocal(parsed.name)) {
       if (parsed.name === 'exit' || parsed.name === 'quit') {
@@ -357,11 +363,11 @@ export async function apply(ctx) {
         return
       }
       if (parsed.name === 'help') {
-        app?.notice?.(helpText(commandSystem.listAll()))
+        await app?.document?.({ title: '命令指南', text: 'Ctrl+K 工作台 · Ctrl+O 工具全文 · Ctrl+T 思考全文\nEsc 返回 / 中断 · Ctrl+C 退出\n\n' + helpText(commandSystem.listAll()) })
         return
       }
       if (parsed.name === 'doctor') {
-        app?.notice?.(doctorReport())
+        await app?.document?.({ title: '运行时诊断', text: doctorReport() })
         return
       }
       if (parsed.name === 'model') {
@@ -372,16 +378,9 @@ export async function apply(ctx) {
           return
         }
         // provider id 本身可能含斜杠（roundrobin/<组id> 虚拟路由），所以
-        // 「第一个斜杠」拆分可能切错。把每个斜杠位置都当作候选拆分，
-        // 交给 selectModel 的 resolveCallConfig 校验裁决——校验是权威，
-        // 文本猜测只是候选生成。
-        const text = parsed.rest
-        const candidates = []
-        for (let i = text.indexOf('/'); i !== -1 && i < text.length - 1; i = text.indexOf('/', i + 1)) {
-          const provider = text.slice(0, i).trim()
-          const model = text.slice(i + 1).trim()
-          if (provider !== '' && model !== '') candidates.push({ provider, model })
-        }
+        // 「第一个斜杠」拆分可能切错。每个斜杠位置都作为候选，交给 selectModel
+        // 的 resolveCallConfig 校验裁决——校验是权威，文本只是候选生成。
+        const candidates = parseModelRefCandidates(parsed.rest)
         if (candidates.length === 0) {
           app?.notice?.('/model 需要 provider/model 形式，例如 /model my-opencode-go/deepseek-v4.1-flash')
           return
@@ -458,6 +457,7 @@ export async function apply(ctx) {
           if (debug) app?.notice?.('[debug] agent.followup 已调用')
         } catch (error) {
           app?.notice?.(`提交失败：${error?.message ?? error}`)
+          return false
         }
       },
       onCommand: (line) => {
@@ -477,9 +477,14 @@ export async function apply(ctx) {
       },
       getSnapshot: () => footerInfo.snapshot(),
       getSessionLabel: () => shortSessionId(kernel.sessionId),
+      getQueueState: () => kernel.runtime.snapshot(),
       getState: () => ({
         turnActive: view.turnActive === true,
-        statusText: view.turnActive === true ? 'working' : undefined,
+        workingActive: view.turnActive === true || view.compacting === true,
+        statusText: view.compacting ? '正在整理上下文' : view.turnActive ? [
+          view.step ? `第 ${view.step} 步` : '准备中',
+          view.rows.some((row) => row.role === 'tool' && !row.done) ? '正在执行工具' : '正在思考与回应',
+        ].join(' · ') : undefined,
       }),
     })
   } catch (error) {
@@ -487,7 +492,11 @@ export async function apply(ctx) {
     throw new Error(`dsh-tui: failed to mount the terminal UI — ${error?.message ?? error}`)
   }
 
-  // 模型上下文窗口只能异步解析，预热一次即可；失败就永远不显示上限那半截。
+  workbench = createWorkbench({ app, kernel, view, registry, runCommand })
+  ctx.provide('dshTui', { version: 1, registry, notice: app.notice, document: app.document,
+    setEditorText: app.setEditorText, requestRender: app.requestRender })
+
+  // Model metadata is cached by route; a switch invalidates the old capacity.
   void footerInfo.warmUp()
 
   // 顶部 banner 走注册表（可被 setHeader 整体换掉），配色取自本 TUI 的主题。
@@ -495,6 +504,8 @@ export async function apply(ctx) {
     createBanner({
       theme,
       getSubtitle: () => `dsh-tui ${pkg.version} · ${modelLabel === '' ? 'default model' : modelLabel}`,
+      getWorkspace: () => process.cwd(),
+      getPreset: () => presetLabel,
     }),
   )
 
@@ -522,7 +533,13 @@ export async function apply(ctx) {
   // 人机回环：不装这两个 waterfall，任何需要授权的工具都会 fail-closed，
   // 模型提问也会直接失败——那样这个 TUI 就只是个聊天框。
   try {
-    uninstallInteractive = installInteractive({ ctx, app, isAvailable: () => !exiting })
+    uninstallInteractive = installInteractive({ ctx, app, isAvailable: () => !exiting,
+      ownsAgent: (agent) => kernel.ownsAgent(agent),
+      approvalDetail: (request) => {
+        const row = view.tools.get(request.callId)
+        return [request.reason, row?.args].filter(Boolean).join('\n\n')
+      },
+    })
   } catch (error) {
     await teardown({ flush: true })
     throw new Error(`dsh-tui: failed to install the interactive loops — ${error?.message ?? error}`)
@@ -534,18 +551,7 @@ export async function apply(ctx) {
 
   // 启动信息块：照 pi 的做法，开机把「我加载了什么」写进对话区，随对话自然
   // 滚进终端 scrollback。异步收集，失败就整块不出现——绝不阻塞启动。
-  void collectStartupSections({
-    ctx,
-    listCommands: () => commandSystem.listAll(),
-    theme,
-    version: pkg.version,
-  })
-    .then((sections) => {
-      if (sections.length > 0) app?.pushRow?.({ role: 'info', sections })
-    })
-    .catch(() => {
-      // 信息块只是开机问候，收集失败不该影响任何东西。
-    })
+  // Capability inventories are available on demand in /context, /tools and /doctor.
 
   // ── 生命周期 ──────────────────────────────────────────────────────────
   //

@@ -64,7 +64,32 @@ export function createRegistry() {
 
   const listeners = new Set()
   let revision = 0
+  let messageRevision = 0
   let orderCounter = 0
+  const stacks = new Map()
+  let display = { thinking: false }
+
+  // Entries retain ownership until their own disposer runs. Removing a covered
+  // entry must never resurrect it when a later plugin is removed.
+  function register(key, value, apply) {
+    const stack = stacks.get(key) ?? []
+    if (!stacks.has(key)) stacks.set(key, stack)
+    const entry = { value }
+    stack.push(entry)
+    apply(value)
+    bump()
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      const index = stack.indexOf(entry)
+      if (index < 0) return
+      const wasTop = index === stack.length - 1
+      stack.splice(index, 1)
+      if (wasTop) { apply(stack.at(-1)?.value); bump() }
+      if (!stack.length) stacks.delete(key)
+    }
+  }
 
   function bump() {
     revision += 1
@@ -87,24 +112,12 @@ export function createRegistry() {
 
   /** 顶部区域。传 undefined 还原为「无 header」。 */
   function setHeader(component) {
-    const previous = surfaces.header
-    surfaces.header = component
-    bump()
-    return () => {
-      surfaces.header = previous
-      bump()
-    }
+    return register('surface:header', component, (value) => { surfaces.header = value })
   }
 
   /** 底部区域。传 undefined 还原为内置状态栏。 */
   function setFooter(component) {
-    const previous = surfaces.footer
-    surfaces.footer = component
-    bump()
-    return () => {
-      surfaces.footer = previous
-      bump()
-    }
+    return register('surface:footer', component, (value) => { surfaces.footer = value })
   }
 
   /**
@@ -113,13 +126,7 @@ export function createRegistry() {
    * 传 undefined 还原为默认 Editor。
    */
   function setEditor(factory) {
-    const previous = surfaces.editor
-    surfaces.editor = factory
-    bump()
-    return () => {
-      surfaces.editor = previous
-      bump()
-    }
+    return register('surface:editor', factory, (value) => { surfaces.editor = value })
   }
 
   /**
@@ -127,13 +134,7 @@ export function createRegistry() {
    * 传 undefined 还原默认。
    */
   function setWorkingIndicator(options) {
-    const previous = surfaces.workingIndicator
-    surfaces.workingIndicator = options === undefined ? undefined : { ...options }
-    bump()
-    return () => {
-      surfaces.workingIndicator = previous
-      bump()
-    }
+    return register('surface:working', options === undefined ? undefined : { ...options }, (value) => { surfaces.workingIndicator = value })
   }
 
   // ── 片段 ──────────────────────────────────────────────────────────────
@@ -151,17 +152,8 @@ export function createRegistry() {
     // 才还原——否则别人早改过它了，我不该把别人的值抹掉。
     // （只记前值是不够的：两个使用者共用同一个 key 时，先撤的那个会把后一个
     //   的值一起清掉。）
-    const previous = statuses.get(key)
     const installed = text === undefined ? undefined : { text: String(text), order: options.order ?? orderCounter++ }
-    if (installed === undefined) statuses.delete(key)
-    else statuses.set(key, installed)
-    bump()
-    return () => {
-      if (statuses.get(key) !== installed) return
-      if (previous === undefined) statuses.delete(key)
-      else statuses.set(key, previous)
-      bump()
-    }
+    return register(`status:${key}`, installed, (value) => { if (value === undefined) statuses.delete(key); else statuses.set(key, value) })
   }
 
   /**
@@ -173,18 +165,9 @@ export function createRegistry() {
   function setWidget(key, component, options = {}) {
     if (typeof key !== 'string' || key === '') throw new Error('setWidget: key must be a non-empty string')
     const placement = options.placement ?? WidgetPlacement.ABOVE_EDITOR
-    const previous = widgets.get(key)
     const installed =
       component === undefined ? undefined : { component, placement, order: options.order ?? orderCounter++ }
-    if (installed === undefined) widgets.delete(key)
-    else widgets.set(key, installed)
-    bump()
-    return () => {
-      if (widgets.get(key) !== installed) return
-      if (previous === undefined) widgets.delete(key)
-      else widgets.set(key, previous)
-      bump()
-    }
+    return register(`widget:${key}`, installed, (value) => { if (value === undefined) widgets.delete(key); else widgets.set(key, value) })
   }
 
   /**
@@ -195,14 +178,7 @@ export function createRegistry() {
   function setMessageRenderer(role, factory) {
     if (typeof role !== 'string' || role === '') throw new Error('setMessageRenderer: role must be a non-empty string')
     if (typeof factory !== 'function') throw new Error('setMessageRenderer: factory must be a function')
-    const previous = messageRenderers.get(role)
-    messageRenderers.set(role, factory)
-    bump()
-    return () => {
-      if (previous === undefined) messageRenderers.delete(role)
-      else messageRenderers.set(role, previous)
-      bump()
-    }
+    return register(`renderer:${role}`, factory, (value) => { if (value === undefined) messageRenderers.delete(role); else messageRenderers.set(role, value); messageRevision++ })
   }
 
   // ── 读取 ──────────────────────────────────────────────────────────────
@@ -233,6 +209,9 @@ export function createRegistry() {
     setStatus,
     setWidget,
     setMessageRenderer,
+    setDisplay(patch) { display = { ...display, ...patch }; messageRevision++; bump() },
+    get messageRevision() { return messageRevision },
+    get display() { return display },
     // 订阅
     subscribe,
     get revision() {

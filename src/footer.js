@@ -22,6 +22,7 @@ import path from 'node:path'
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import { createEventTail } from './session-events.js'
+import { fit, pair } from './layout.js'
 
 /**
  * 分段之间的分隔符。
@@ -57,7 +58,7 @@ export function formatTokens(n) {
  * @returns {string|undefined}
  */
 export function readGitBranch(startDir, now, cache, ttlMs = 2000) {
-  if (cache.value !== undefined && cache.at !== undefined && now - cache.at < ttlMs) return cache.value
+  if (cache.at !== undefined && now - cache.at < ttlMs) return cache.value
 
   let branch
   try {
@@ -89,7 +90,7 @@ export function readGitBranch(startDir, now, cache, ttlMs = 2000) {
         cache.at = now
         return undefined
       }
-      headPath = path.join(match[1], 'HEAD')
+      headPath = path.join(path.resolve(path.dirname(gitDir), match[1]), 'HEAD')
     }
 
     const head = fs.readFileSync(headPath, 'utf8').trim()
@@ -138,10 +139,11 @@ function tokenTone(ratio) {
  * @param {()=>({provider?:string,model?:string}|undefined)} options.getSelection
  * @param {string} [options.cwd]
  */
-export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cwd() }) {
+export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cwd(), onUpdate }) {
   const gitCache = {}
   let contextLimit
-  let limitResolved = false
+  let limitKey
+  const limits = new Map()
   /** tokenMeter 的测量结果缓存：按会话日志版本号失效。 */
   let tokenCache = { seq: -1, used: undefined }
   /** 最近一次请求的真实路由（增量扫描，只读新事件）。 */
@@ -192,17 +194,23 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
 
   /** 模型上下文窗口只需要解析一次（异步），其余每帧同步读。 */
   async function resolveContextLimit() {
-    if (limitResolved) return
-    limitResolved = true
     const selection = getSelection()
     if (selection?.provider === undefined || selection?.model === undefined) return
-    try {
-      const info = await ctx.get('llm')?.resolveModelInfo?.(selection.provider, selection.model)
-      const limit = info?.contextWindow ?? info?.context?.contextWindow
-      if (Number.isFinite(limit)) contextLimit = limit
-    } catch {
-      // 模型目录没报窗口时就不显示上限，而不是编一个。
+    const key = JSON.stringify([selection.provider, selection.model])
+    if (key === limitKey) return limits.get(key)
+    limitKey = key
+    contextLimit = undefined
+    if (!limits.has(key)) {
+      limits.set(key, Promise.resolve().then(async () => {
+        try {
+          const info = await ctx.get('llm')?.resolveModelInfo?.(selection.provider, selection.model)
+          const limit = info?.contextWindow ?? info?.context?.contextWindow
+          return Number.isFinite(limit) && limit > 0 ? limit : undefined
+        } catch { return undefined }
+      }))
     }
+    const limit = await limits.get(key)
+    if (limitKey === key) { contextLimit = limit; onUpdate?.() }
   }
 
   /** 当前上下文占用。按会话 seq 缓存——measure 会重放日志，不能每帧调。 */
@@ -254,11 +262,16 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
     snapshot() {
       const selection = getSelection()
       const route = latestRoute()
+      const key = selection ? JSON.stringify([selection.provider, selection.model]) : undefined
+      if (key !== limitKey && selection) void resolveContextLimit()
+      const recordedContext = getAgent()?.session?.requestContext?.()
+      const recordedLimit = recordedContext && recordedContext.provider === selection?.provider && recordedContext.model === selection?.model
+        ? recordedContext.contextWindow : undefined
 
       // 优先「下一步要用的」（getSelection，/model 切换立即生效），退回
       // 「上一次实际用的」（request/header）。只显示模型名——与 pi 的底栏一致。
       const model = selection?.model ?? route?.model
-      const effort = selection?.reasoningEffort ?? route?.effort
+      const effort = selection ? selection.reasoningEffort : route?.effort
 
       const used = measureTokens()
       // 用 path.basename 而不是 split('/')：后者在 Windows 上会把整个路径
@@ -269,7 +282,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
         thinking: effort,
         dir: base === '' ? cwd : base,
         branch: readGitBranch(cwd, Date.now(), gitCache),
-        tokens: used === undefined ? undefined : { used, limit: contextLimit },
+        tokens: used === undefined ? undefined : { used, limit: recordedLimit ?? (key === limitKey ? contextLimit : undefined) },
         sandbox: shortSandboxMode(sandboxMode()),
       }
     },
@@ -352,34 +365,29 @@ export class DefaultFooter {
     const segments = this.buildSegments(snapshot)
     const sessionLabel = this.getSessionLabel()
 
-    const plain = segments.map((s) => s.text).join(SEPARATOR) + '|' + (sessionLabel ?? '')
+    const plain = JSON.stringify([width, snapshot, this.registry.statusTexts(), sessionLabel])
     if (this.cache !== undefined && this.lastKey === plain) return this.cache
     this.lastKey = plain
 
-    const stylePart = (part) => (part.tone === undefined ? part.text : theme.fg(part.tone, part.text))
-    const style = (s) => (s.parts === undefined ? stylePart(s) : s.parts.map(stylePart).join(''))
-
-    // 逐段拼接，让每段可以自带分隔符（模式段用的是 `·` 而不是 `|`）。
-    let left = ''
-    for (const segment of segments) {
-      if (left !== '') left += theme.fg('dim', segment.separator ?? SEPARATOR)
-      left += style(segment)
-    }
-    let right = sessionLabel === undefined ? '' : theme.fg('dim', sessionLabel)
-
-    // 宽度不够时按「先丢右、再截左」的顺序退让，保证永远不溢出。
-    const leftWidth = visibleWidth(left)
-    const rightWidth = visibleWidth(right)
-    if (leftWidth + rightWidth + 3 > width) {
-      right = ''
-      if (leftWidth + 2 > width) left = truncateToWidth(left, Math.max(0, width - 2))
-    }
-
-    const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right) - 2)
-    const body = ' ' + left + ' '.repeat(gap) + right + ' '
-
-    // 顶部分隔线：暖琥珀（pi 的 powerline 底栏同款语气），而不是和正文同色的灰线。
-    this.cache = [theme.fg('footerBorder', '─'.repeat(width)), truncateToWidth(body, width)]
+    const inner = Math.max(0, width - 2)
+    const used = formatTokens(snapshot.tokens?.used)
+    const limit = formatTokens(snapshot.tokens?.limit)
+    const ratio = snapshot.tokens?.limit > 0 ? snapshot.tokens.used / snapshot.tokens.limit : undefined
+    const percent = ratio === undefined ? '' : ` (${(ratio * 100).toFixed(1)}%)`
+    const usage = used === undefined ? '' : limit ? `${used}/${limit}${percent}` : `${used} tok`
+    const meter = ratio !== undefined && width >= 100
+      ? ' ' + '━'.repeat(Math.min(8, Math.max(0, Math.round(ratio * 8)))) + '·'.repeat(8 - Math.min(8, Math.max(0, Math.round(ratio * 8)))) : ''
+    const usageText = theme.fg(tokenTone(ratio), usage + meter)
+    const modelBudget = Math.max(0, inner - visibleWidth(usageText) - (usage ? 2 : 0))
+    const model = [snapshot.model, width >= 90 && snapshot.thinking ? `think:${snapshot.thinking}` : undefined].filter(Boolean).join(' · ')
+    const first = pair(theme.fg('muted', fit(model, modelBudget)), usageText, inner)
+    const mode = snapshot.sandbox ?? ''
+    const identity = [snapshot.dir ? `dir ${snapshot.dir}` : undefined, snapshot.branch ? `⎇ ${snapshot.branch}` : undefined,
+      width >= 110 ? sessionLabel : undefined, ...this.registry.statusTexts()].filter(Boolean).join(' · ')
+    const modeText = theme.fg(mode === 'yolo' ? 'warning' : 'dim', mode)
+    const identityBudget = Math.max(0, inner - visibleWidth(modeText) - (mode ? 2 : 0))
+    const second = pair(theme.fg('dim', fit(identity, identityBudget)), modeText, inner)
+    this.cache = [fit(' ' + first, width), fit(' ' + second, width)]
     return this.cache
   }
 }
