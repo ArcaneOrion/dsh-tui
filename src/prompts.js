@@ -188,12 +188,12 @@ export function createPrompter({ tui, theme }) {
     })
   }
 
-  /** 弹窗外框：底色块 + 标题 + 可选说明。 */
+  /** 弹窗外框：暗面板色 + 强调标题。整块亮底色会把终端变成一面灰墙。 */
   function frame(title, detail) {
-    const box = new Box(1, 0, (s) => theme.bg('selectedBg', s))
-    box.addChild(new Text(theme.fg('accent', theme.bold(title)), 0, 0))
+    const box = new Box(1, 1, (s) => theme.bg('panelBg', s))
+    box.addChild(new Text(theme.fg('accent', theme.bold(title)), 1, 0))
     if (typeof detail === 'string' && detail !== '') {
-      box.addChild(new Text(theme.fg('muted', detail), 0, 0))
+      box.addChild(new Text(theme.fg('muted', detail), 1, 0))
     }
     box.addChild(new Spacer(1))
     return box

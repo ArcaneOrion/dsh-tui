@@ -20,6 +20,9 @@ import { createFooterInfo, DefaultFooter, formatTokens, readGitBranch, shortSand
 import { createRegistry } from '../src/registry.js'
 import { createTheme } from '../src/theme.js'
 
+/** 断言用的纯文本视图：多色段之间夹着 ANSI 码，先剥掉再匹配。 */
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+
 const theme = createTheme(undefined, { COLORTERM: 'truecolor' })
 
 // ── 格式化 ───────────────────────────────────────────────────────────────
@@ -109,18 +112,19 @@ test('快照齐全时五段都在，且顺序为 模型/目录/分支/用量/沙
   const snapshot = { model: 'p/m', dir: 'D', branch: 'main', tokens: { used: 1000, limit: 10_000 }, sandbox: 'yolo' }
   const footer = makeFooter(snapshot)
   const segments = footer.buildSegments(snapshot)
+  // dir/branch 段是多色 parts（标签与值分色），取拼接后的纯文本比对。
   assert.deepEqual(
-    segments.map((s) => s.text),
-    ['p/m', 'dir D', '⏵ main', '1.0k/10.0k (10.0%)', 'yolo'],
+    segments.map((s) => (s.parts === undefined ? s.text : s.parts.map((p) => p.text).join(''))),
+    ['p/m', 'dir D', '⎇ main', '1.0k/10.0k (10.0%)', 'yolo'],
   )
 })
 
 test('渲染文本包含真实数值与百分比', () => {
   const footer = makeFooter({ model: 'p/m', dir: 'D', branch: 'main', tokens: { used: 12_345, limit: 1_000_000 }, sandbox: 'yolo' })
-  const out = footer.render(120).join('\n')
+  const out = stripAnsi(footer.render(120).join('\n'))
   assert.match(out, /p\/m/)
   assert.match(out, /dir D/)
-  assert.match(out, /⏵ main/)
+  assert.match(out, /⎇ main/)
   assert.match(out, /12\.3k\/1\.0M \(1\.2%\)/)
   assert.match(out, /yolo/)
 })

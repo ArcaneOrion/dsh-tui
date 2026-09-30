@@ -111,6 +111,15 @@ export const DARK_TOKENS = Object.freeze({
 
   // 选择 / 背景
   selectedBg: '#2f3549',
+  /** 弹窗面板底色：比 selectedBg 暗得多，读作「浮起来的面板」而不是一大块灰板。 */
+  panelBg: '#161a29',
+  panelBorder: '#3b4261',
+
+  // 底栏：每段一个色相（对照 pi 的实机配色），分隔线用暖琥珀。
+  footerBorder: '#c1843a',
+  dirLabel: '#7dcfff',
+  branchLabel: '#bb9af7',
+  thinkLabel: '#e0af68',
 
   // 输入框
   editorBorder: '#3b4261',

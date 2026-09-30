@@ -303,17 +303,22 @@ export class DefaultFooter {
   }
 
   /**
-   * 把快照拼成分段列表。
-   * tone 为 undefined 表示「文本自带配色，原样输出」。
+   * 把快照拼成分段列表。每段可以是 {text,tone} 或 {parts:[{text,tone}]}
+   * （一段内多色，比如 `dir` 标签青、目录名亮）。
    */
   buildSegments(snapshot) {
     const segments = []
 
-    if (snapshot.model !== undefined) segments.push({ text: snapshot.model, tone: 'accent' })
-    // 推理强度：与 pi 的 `think:high` 同一位置、同一写法。
-    if (snapshot.thinking !== undefined) segments.push({ text: `think:${snapshot.thinking}`, tone: 'muted' })
-    if (snapshot.dir !== undefined) segments.push({ text: `dir ${snapshot.dir}`, tone: 'muted' })
-    if (snapshot.branch !== undefined) segments.push({ text: `⏵ ${snapshot.branch}`, tone: 'muted' })
+    // 模型名：亮白（对照 pi，模型段是整条栏里最亮的一项）。
+    if (snapshot.model !== undefined) segments.push({ text: snapshot.model, tone: 'text' })
+    // 推理强度：`think:` 标签与档位同色暖黄。
+    if (snapshot.thinking !== undefined) segments.push({ text: `think:${snapshot.thinking}`, tone: 'thinkLabel' })
+    if (snapshot.dir !== undefined) {
+      segments.push({ parts: [{ text: 'dir ', tone: 'dirLabel' }, { text: snapshot.dir, tone: 'text' }] })
+    }
+    if (snapshot.branch !== undefined) {
+      segments.push({ parts: [{ text: '⎇ ', tone: 'branchLabel' }, { text: snapshot.branch, tone: 'branchLabel' }] })
+    }
 
     const tokens = snapshot.tokens
     if (tokens !== undefined) {
@@ -351,7 +356,8 @@ export class DefaultFooter {
     if (this.cache !== undefined && this.lastKey === plain) return this.cache
     this.lastKey = plain
 
-    const style = (s) => (s.tone === undefined ? s.text : theme.fg(s.tone, s.text))
+    const stylePart = (part) => (part.tone === undefined ? part.text : theme.fg(part.tone, part.text))
+    const style = (s) => (s.parts === undefined ? stylePart(s) : s.parts.map(stylePart).join(''))
 
     // 逐段拼接，让每段可以自带分隔符（模式段用的是 `·` 而不是 `|`）。
     let left = ''
@@ -372,7 +378,8 @@ export class DefaultFooter {
     const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right) - 2)
     const body = ' ' + left + ' '.repeat(gap) + right + ' '
 
-    this.cache = [theme.fg('border', '─'.repeat(width)), truncateToWidth(body, width)]
+    // 顶部分隔线：暖琥珀（pi 的 powerline 底栏同款语气），而不是和正文同色的灰线。
+    this.cache = [theme.fg('footerBorder', '─'.repeat(width)), truncateToWidth(body, width)]
     return this.cache
   }
 }
