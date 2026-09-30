@@ -317,10 +317,26 @@ export async function apply(ctx) {
       theme,
       registry,
       onSubmit: (text) => {
-        kernel.submit(text)
+        // 提交环节的任何异常都必须在界面上**看得见**。静默失败会让用户
+        // 以为是按键失灵，而真正的原因藏在没人看的地方。
+        //
+        // DSH_TUI_DEBUG_SUBMIT=1 会额外打出每一步的回执，用来区分
+        // 「onSubmit 根本没被调到」和「调到了但内核没反应」——
+        // 这两种症状在界面上长得一模一样。
+        const debug = process.env.DSH_TUI_DEBUG_SUBMIT === '1'
+        if (debug) app?.notice?.(`[debug] onSubmit 收到：${JSON.stringify(text)}`)
+        try {
+          kernel.submit(text)
+          if (debug) app?.notice?.('[debug] agent.followup 已调用')
+        } catch (error) {
+          app?.notice?.(`提交失败：${error?.message ?? error}`)
+        }
       },
       onCommand: (line) => {
-        void runCommand(line)
+        // 异步命令的拒绝也必须落地，不能变成 unhandledRejection。
+        void runCommand(line).catch((error) => {
+          app?.notice?.(`命令执行失败：${error?.message ?? error}`)
+        })
       },
       listCommands: () => commandSystem.listAll(),
       combineProviders: () =>

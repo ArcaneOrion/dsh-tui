@@ -183,9 +183,17 @@ export async function createKernel({ ctx, view, startup, onEvent, onUpdate }) {
 
   // ── 驱动 ──────────────────────────────────────────────────────────────
 
-  /** 提交一条用户消息，开启（或继续）一个回合。 */
+  /**
+   * 提交一条用户消息，开启（或继续）一个回合。
+   *
+   * **失败必须抛出来**，不能静默 return。早期版本在 agent 未就绪时直接
+   * `return`，而调用方也没有 catch——用户看到的就是「回车没反应，没有任何
+   * 报错」。静默失败比报错难查一百倍。
+   */
   function submit(text) {
-    if (agent === undefined) return
+    if (agent === undefined) {
+      throw new Error('会话还没建立，无法提交（agent is undefined）')
+    }
     agent.followup(
       createUserMessage({
         content: [{ type: 'text', text }],
