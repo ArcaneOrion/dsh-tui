@@ -177,14 +177,39 @@ profile 用 `link:` 安装本插件时，`node_modules/@arcaneorion/dsh-tui` 是
 | 限制 | 说明 |
 |---|---|
 | 无代码高亮的语言 | `highlight.js` 只认注释/字符串/数字/关键字，且只对常见语言；其余退回纯色 |
-| `/model` 只改下次启动 | 运行中切换模型需要重开会话；命令里会明说这一点 |
+| `/preset` 只能在空白会话切换 | 内核契约：预设决定工具目录，已有回合的会话切换会破坏日志一致性（canonical `agent-preset/locked`）；命令会把错误如实显示 |
 | `@` 引用不做内容展开 | 补全成路径后原样发给模型，由它自己用 read 工具读 |
 | 投影忽略 surface 的 `replace` 语义 | 压缩（compaction）后界面可能与实际 surface 分叉；见 `AUDIT.md` |
 | 纯图片消息不渲染 | 图片渲染尚未接入 |
 | 长会话全量重渲染 | 已做行级缓存，但帧组装仍是 O(行数)；几千行以上会变慢 |
 
+## 模型与会话预设
+
+**运行时切换模型（不需要重开会话）：**
+
+```
+/model                              # 渠道 → 模型 → 推理强度 三级弹窗（真实 llm 目录）
+/model my-opencode-go/deepseek-v4.1-flash
+/model roundrobin/round-glm-5-3f/deepseek-v4.1-flash   # 虚拟轮询组也支持
+```
+
+切换语义与内核 canonical 一致：`llm.resolveCallConfig` 先校验（无效渠道/模型/强度直接报错）→
+写入 durable `model/selection` 事件（resume 后仍然有效）→ 更新可变 selection ref（**下一步请求生效**，
+正在运行的请求不受影响）→ 后台保存为新默认（保存失败会如实提示）。
+
+**会话预设（capability composition）：**
+
+```
+/preset            # 弹出预设列表（standard / ptc / minimal / cordis）
+dsh tui --preset ptc
+```
+
+预设决定一个会话的工具目录、提示词与委托能力。启动时按 `--preset`（或 registry 默认 `standard`）
+挂载；resume 时按 durable 记录恢复——**历史会话绝不会被新默认覆盖**。
+
 ## 状态
 
 已可运行：profile `tui` 已建立，`dsh --profile tui --dump-config` 组合通过，非 TTY 下给出明确诊断。
 
-**交互体验仍需人验**：真实终端里的挂载、打字、流式、审批弹窗、退出还原。
+**已实测（PTY 端到端）**：挂载、流式回复、审批弹窗、会话恢复、`/model` 选择器与直切、`/preset` 列表。
+**仍需人验**：真实终端里的观感、长会话性能。

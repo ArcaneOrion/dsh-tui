@@ -457,3 +457,36 @@ Promise 结算回内核 → 通知行确认 → 模型继续。
 
 顺带验证到的还有：**斜杠命令系统端到端**——`/permission` 的补全描述符、
 执行、以及它的输出被渲染成对话区的通知行，全部正确。
+
+---
+
+## 第 8 轮 · 模型运行时切换与会话预设（用户审计驱动）
+
+**触发**：用户指出「dsh 本身有会话预设选择，tui 没有；tui 的 /model 无法选择已有渠道商」。
+
+### 事实修正（先查证再动手）
+
+| 旧认知 | 实查结论 |
+|---|---|
+| 会话预设 = profile | 预设是 agent-scoped capability composition（`agentPresets.mount`，setup 内挂载），profile 只是 bundling 单位 |
+| `/model` 没有目录可用 | `llm.listProviders/listModels/resolveCallConfig` 就是目录；本轮全接上 |
+| 需要自造模型切换机制 | `installModelSelection` 的 ref 本就是可变的；durable 事件 `model/selection` 在 dsh-session 内建词汇表里（KNOWN_SESSION_EVENT_TYPES），不依赖 session-controller |
+
+### 实测抓到的三个真问题（全部修复）
+
+1. **`ctx.loader.await()` 在 apply() 内死锁**：装载树在等本行激活，本行又在等装载树 → 进程静默挂起、TUI 永不渲染。改为有界轮询 `presetService.resolve()`。
+2. **preset 行注册与本插件 apply() 竞态**：`Unknown agent preset: standard`。轮询方案顺带解决。
+3. **preset 挂载校验缺依赖**：`tool-subagent` 的 `modelSelectionSettings: true` 要求宿主持有 `@deepseek-ai/dsh-tool-subagent/model-selection-settings` 行——官方 web patch 有，我们的组合漏了。补上后挂载通过。
+
+### 验证记录（PTY）
+
+- `/model` 无参 → 「选择渠道商」overlay 列出 65 个渠道（含 38 dormant）、逐渠道模型数。
+- `/model roundrobin/round-glm-5-3f/deepseek-v4.1-flash` → 「已切换模型 · reasoning:max」，banner/footer 同步。虚拟 provider id 含斜杠 → 多候选拆分 + `resolveCallConfig` 裁决。
+- `/preset` → standard/ptc/minimal/cordis 列表，当前项带 ✓。
+- 277 测试全绿；`pnpm run audit` 三项门禁通过。
+
+### 明确不做 / 已知边界
+
+- `/preset` 不支持已有回合的会话（内核契约 `agent-preset/locked`；预设决定工具目录，热切会破坏日志一致性）。
+- `resume` 恢复预设的优先级：projection → header → registry 默认；显式 `--preset` 只对新会话生效。
+- 未接 `sessionController.selectModel`（需 Host controller 全家桶）；TUI 用「durable 事件 + 可变 ref」实现等价语义，durable 事件是内建词汇，重建行为一致。
