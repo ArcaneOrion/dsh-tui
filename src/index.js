@@ -25,7 +25,7 @@ import { installInteractive } from './interactive.js'
 import { logTerminalState, tapStdin } from './keylog.js'
 import { combineAutocomplete, createFileIndex, createMentionAutocomplete } from './mentions.js'
 import { createPrefs } from './prefs.js'
-import { loadModelCatalog, modelOptions, parseModelRef, providerOptions, reasoningOptions } from './model-catalog.js'
+import { loadModelCatalog, modelOptions, providerOptions, reasoningOptions } from './model-catalog.js'
 import { collectStartupSections } from './startup-info.js'
 
 const pkg = createRequire(import.meta.url)('../package.json')
@@ -371,13 +371,33 @@ export async function apply(ctx) {
           await selectModelInteractively()
           return
         }
-        const requested = parseModelRef(parsed.rest)
-        if (requested === undefined) {
+        // provider id 本身可能含斜杠（roundrobin/<组id> 虚拟路由），所以
+        // 「第一个斜杠」拆分可能切错。把每个斜杠位置都当作候选拆分，
+        // 交给 selectModel 的 resolveCallConfig 校验裁决——校验是权威，
+        // 文本猜测只是候选生成。
+        const text = parsed.rest
+        const candidates = []
+        for (let i = text.indexOf('/'); i !== -1 && i < text.length - 1; i = text.indexOf('/', i + 1)) {
+          const provider = text.slice(0, i).trim()
+          const model = text.slice(i + 1).trim()
+          if (provider !== '' && model !== '') candidates.push({ provider, model })
+        }
+        if (candidates.length === 0) {
           app?.notice?.('/model 需要 provider/model 形式，例如 /model my-opencode-go/deepseek-v4.1-flash')
           return
         }
         try {
-          const selected = await kernel.selectModel(requested)
+          let selected
+          let lastError
+          for (const candidate of candidates) {
+            try {
+              selected = await kernel.selectModel(candidate)
+              break
+            } catch (error) {
+              lastError = error
+            }
+          }
+          if (selected === undefined) throw lastError ?? new Error('没有可校验的 provider/model 拆分')
           modelLabel = `${selected.provider}/${selected.model}`
           const result = prefs.write({ model: modelLabel })
           app?.notice?.(`已切换模型：${modelLabel}${selected.reasoningEffort ? ` · reasoning:${selected.reasoningEffort}` : ''}\n下一步请求生效。${result.ok ? '默认值也已保存。' : `默认值保存失败：${prefs.file}`}`)
