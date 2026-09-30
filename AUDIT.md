@@ -290,3 +290,71 @@ pi-tui 的 Editor 里**「换行」分支排在「提交」分支前面**，而 
 把 `groups` 一并搬过去即可。那需要改插件本身。
 
 ---
+
+---
+
+## 第 7 轮 · 按 pi 的源码对齐 UI
+
+前几轮是「能用」，这轮开始是「像 pi」。
+
+### 方法：读 pi 的真实组件源码，不靠猜
+
+`pi-coding-agent/dist/modes/interactive/components/` 是**可读的编译产物**。
+把三个组件的实现读出来照着对齐——而不是对着截图猜：
+
+| pi 的组件 | 它的做法 | 我原来的 |
+|---|---|---|
+| `user-message.js` | `Box(1, 1, bg(userMessageBg))` + **Markdown** | `Box(1, 0)` + 纯 `Text` + 借用 `toolPendingBg` |
+| `assistant-message.js` | 正文**不铺底色**（方便复制）；思考块 `thinkingText` + 斜体 | 自定义 `✻` 前缀 + `reasoningText` token |
+| `tool-execution.js` | **整块有底色的框**，底色随状态变（pending/success/error） | 无底色的纯文本行 |
+
+主题 token 命名改成 pi 的词汇（`userMessageBg` / `userMessageText` / `thinkingText`），
+读两边代码时不用做心智翻译。
+
+底栏加上 `think:<档位>` 段（与 pi 同位置同写法），模型只显示模型名。
+
+### 顺带修掉一个潜伏 bug：活会话读事件的方式
+
+底栏取不到真实路由，打日志才发现 `seq=19` 而 `events.length=0`。
+
+**活会话上 `session.events` 是空的**，必须按序号用 `session.eventAt(seq)` 读——
+依据是 dsh 自己 headless 的实现（`dsh-headless/lib/index.js` 里那句
+"Iterate a live Session's durable events in order"）。
+
+两处受影响，第二处更严重：
+
+| 位置 | 影响 |
+|---|---|
+| `footer.js` 取真实路由 | `think:` 段永远不出现 |
+| **`kernel.js` 的 resume replay** | **resume 看不到任何历史对话** |
+
+新增 `src/session-events.js` 统一这个读取方式（含增量读，避免每帧 O(n)）。
+
+**`--resume` 已端到端验证**：第一次会话发「记住一个词：蓝色」→ 退出 →
+`dsh tui --resume <id>` → 屏幕上恢复了 `记住一个词` 与 `蓝色`（40 个事件，
+4 条 user + 4 条 assistant）。这条路径此前从没测过。
+
+### 再补一个高可用缺口：杂散输出防护
+
+实测确认 **pi-tui 不拦截 `console` / `stdout`**。`model-channel-manager` 在 boot 时
+就 `console.log` 了一行；会话期间任何插件这么干，那行会直接写进终端把画面搅乱。
+
+`src/console-guard.js`：**只接管 `console.*`，绝不碰 `process.stdout.write`**
+（后者是 pi-tui 的渲染通道）。杂散内容写进 `~/.dsh-tui/stray-console.log`，
+界面只提示一次。
+
+写这个时自己踩了一次 TDZ：`restoreConsole` 声明在使用它的 `teardown` 之后，
+中间的错误路径（`createApp` 失败等）会撞上暂时性死区。改成提前 `let` 声明。
+
+### 本轮结果
+
+测试 235 → **257 个用例**全部通过。宽屏（120 列）开机画面与 pi 的截图结构一致：
+banner → `[Context]`/`[Skills]`/`[Commands]`/`[Plugins]`/`[Theme]` → 底栏。
+
+### 仍未对齐的（明确记录）
+
+| 项 | 为什么没做 |
+|---|---|
+| OSC 133 shell 集成标记 | pi 用它做「跳到上一条命令」。收益小，且转义序列可能干扰宽度计算与虚拟化 |
+| 「有更新可用」提示框 | 它服务的是 pi 的更新检查功能；本 TUI 没有该功能，加一个没人调用的渲染器就是死代码 |
+| 底栏的 `⚙ <扩展名>` 段 | 机制已在（`registry.setStatus`），但没有插件往里写。dsh 侧没有对应物 |
