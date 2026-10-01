@@ -17,6 +17,7 @@ import path from 'node:path'
 
 import { createApp } from './app.js'
 import { renderWelcomeBox, welcomeRow } from './banner.js'
+import { collectStartupSections } from './startup-info.js'
 import { createCommandAutocomplete, createCommandSystem, helpText, parseCommandLine } from './commands.js'
 import { installConsoleGuard } from './console-guard.js'
 import { createFooterInfo } from './footer.js'
@@ -714,6 +715,24 @@ export async function apply(ctx) {
       // 会话头还没就绪就用进程 cwd；欢迎页是快照，不重试。
     }
     view.rows.push(welcomeRow({ version: pkg.version, model: modelLabel, cwd, preset: presetLabel }))
+
+    // 开机信息块（pi 式分节）：[Context] / [Skills] / [Commands] / [Plugins] /
+    // [Theme]，写进对话区随对话滚入 scrollback——告诉你「这次加载了什么」。
+    // 这套渲染一直存在（startup-info.js）却从没接上，所以用户看不到。
+    try {
+      const sections = await collectStartupSections({
+        ctx,
+        listCommands: () => commandSystem.listAll(),
+        theme,
+        cwd,
+        version: pkg.version,
+      })
+      if (Array.isArray(sections) && sections.length > 0) {
+        view.rows.push({ key: 'startup-info', role: 'info', sections, done: true })
+      }
+    } catch {
+      // 采集失败就整块不出现——开机信息不该阻止启动。
+    }
     view.revision += 1
   }
 

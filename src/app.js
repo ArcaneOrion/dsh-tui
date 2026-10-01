@@ -603,7 +603,17 @@ export function createApp(options) {
     cancelPrompts: () => prompter.cancelAll(),
     /** 当前在等回答的弹窗数量（诊断用）。 */
     pendingPrompts: () => prompter.pendingCount(),
-    start: () => tui.start(),
+    start: () => {
+      // 先清屏再接管：launcher 或别的插件可能在 TUI 起来前往终端打过日志
+      // （`[model-channel-manager] booted …`、`[tavily-web] registered …` 这类），
+      // pi-tui 的首帧又假定屏幕是干净的。清掉它们，界面从干净的一屏开始。
+      try {
+        terminal.clearScreen?.()
+      } catch {
+        // 清屏失败不阻止启动。
+      }
+      tui.start()
+    },
     dispose: () => {
       if (disposed) return
       disposed = true

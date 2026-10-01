@@ -36,8 +36,8 @@ export function fixtureRuntime() {
 }
 
 export function memoryTerminal(columns = 100, rows = 32) {
-  return { columns, rows, output: '', start(onInput, onResize) { this.onInput = onInput; this.onResize = onResize },
+  return { columns, rows, output: '', cleared: false, start(onInput, onResize) { this.onInput = onInput; this.onResize = onResize },
     stop() {}, write(data) { this.output += data }, hideCursor() {}, showCursor() {}, clearLine() {},
-    moveBy() {}, clearScreen() {}, setTitle() {}, setProgress() {}, clearProgress() {},
+    moveBy() {}, clearScreen() { this.cleared = true }, setTitle() {}, setProgress() {}, clearProgress() {},
   }
 }

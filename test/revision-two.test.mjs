@@ -224,3 +224,14 @@ test('输入栏：只有线条、没有底色块，边框用 editorBorder 且铺
     assert.match(lines.join('\n'), /中文草稿/, '草稿仍在输入栏里')
   } finally { app.dispose() }
 })
+
+test('启动时先清屏：不把 launcher/插件的开机日志留在界面上方', () => {
+  const terminal = memoryTerminal(80, 20)
+  const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal,
+    getState: () => ({}), getSnapshot: () => ({}) })
+  try {
+    assert.equal(terminal.cleared, false)
+    app.start()
+    assert.equal(terminal.cleared, true, 'start() 必须先清屏再接管')
+  } finally { app.dispose() }
+})

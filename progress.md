@@ -1,5 +1,14 @@
 # 进度记录
 
+## 第十轮
+
+- 用户反馈开机时终端上方会留两行插件日志（`[model-channel-manager] booted …`、`[tavily-web] registered …`），不好看；并问能否像 pi 一样在 TUI 里显示加载内容。
+- 求证：两行都是 **`console.log`**，来自用户自己的两个插件（model-channel-manager / tavily-web），且发生在 **dsh-tui 挂载之前**——那时 console 防护还没装上，所以直落终端；console 防护只覆盖安装之后的调用。
+- 另一个发现：pi 式开机面板（`startup-info.js` 的 `collectStartupSections`：`[Context]/[Skills]/[Commands]/[Plugins]/[Theme]`）**代码与测试都在，却从没在 index.js 里接上**——用户看不到「加载了什么」正是这个原因。
+- 改动：①`app.start()` 先 `terminal.clearScreen()` 再接管（pi-tui 首帧本就假定屏幕干净），开机日志不再露在界面上方；②把开机面板接上，在全新会话里紧随欢迎页写一行 `role: info`（失败则整块不出现）。
+- 验证（真机 tmux）：插件开机日志 0 处残留；面板分节 `[Context]/[Commands]/[Plugins]/[Theme]` 出现，`[Plugins]` 列出本次实际加载的行（含 model-channel-manager、tavily-web、四个 preset、cordis 宿主行等）。337 测试通过（+1：start() 必须先清屏）。
+- 遗留选项（已告知用户）：想让那两行**显示在 TUI 里**而不是隐藏，需要 console 防护更早安装——即把 `@arcaneorion/dsh-tui` 挪到 bundles 列表更前面，或让这两个插件改用带开关的日志。
+
 ## 第九轮（意图纠偏）
 
 - 用户指出三处我理解偏了：①状态行色块要**回到上一版**（提饱和那版太扎眼）；②他说的「色块」是**输入栏本身**，不是状态行；③权限应当**在状态栏下面持久显示**，而我做成了临时 notice——「之前没对齐意图你就开工了」。
