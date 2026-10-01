@@ -1,5 +1,12 @@
 # 进度记录
 
+## 第七轮
+
+- 用户给出 Claude Code 状态行截图，要求「输入栏下面的 UI 仿照它」。**先把图真正读进来**（用图片工具读附件，而不是凭印象），确认设计要素：一行**连续色块**、每段饱和底色 + 浅色文字、段间无缝、每段左右各一空格内边距、**末段铺满整行**；段内容为 路径 · 分支 · CPU · MEM · 时间。
+- 底栏重写为色块状态行（`DefaultFooter`）：单行，段顺序 模型 · think · 用量 · 沙箱 · 路径 · 分支 · 状态提示 · CPU · MEM · 时间；主题新增段色板（`segText/segBlue/segTeal/segGreen/segAmber/segRed/segSlate/segGray`，蓝与 pi 两套）。取数层新增 `path`（`~` 缩写）、`cpu`（loadavg/ncpu）、`mem`、`clock`（`MM/DD 周X HH:MM`），每秒最多采一次。
+- 分配算法经三轮实测修正：①窄屏时末段若是告警色（yolo 红）会把整行拖成一条红条 → 填充改用中性色；②按优先级丢弃时未截断的路径段挡住"放得下"判断，把用量段挤掉 → 改为「只丢比路径更不重要的段」；③丢弃顺序改为 会话号 → 时间 → 内存 → CPU → think → 状态提示 → 分支，用量/权限/模型永不为路径让位。
+- 验证：331 测试通过（底栏相关 +4 改写/新增）；真机 tmux 140 列底栏为 `round-modelacope-model | think:max | 0/1.0M (0.0%) | workspace-write | ~/AI/AI-DSH/plugin/DSH-TUI | ⎇ main | CPU23% | MEM65% | 10/01 周四 17:54`，六种段底色与浅色前景均出现在原始流里；120/96/60 列三种宽度的渲染预览（HTML→Chromium 截图）存档为 `docs/footer-statusline.png`。
+
 ## 第六轮
 
 - 用户报告 `/resume`「有反应，就是有点久」。**先量再改**：tmux 实测选择器出现耗时冷 1065ms / 热 860ms；加 `DSH_TUI_DEBUG_SESSIONS=1` 探针（写临时文件，不污染 TUI）得到分解——`listSessions()` 扫全库 563 个会话 ~250ms，`readTitleSnapshots()` 为 45 个候选逐个加载完整事件日志折叠标题 ~620ms。

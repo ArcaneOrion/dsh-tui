@@ -41,11 +41,15 @@ test('底栏在缩窄和切换分支后更新，所有输出仍在字符宽度�
   const footer = new DefaultFooter({ theme, registry: createRegistry(), getSnapshot: () => state })
   footer.render(120)
   state = { ...state, branch: 'fix' }
+  // 单行色块状态栏：48 列时先丢分支段，但用量/权限必须留下，且永不溢出。
   const lines = footer.render(48)
   assert.ok(lines.every((line) => visibleWidth(line) <= 48))
-  assert.match(lines.map(plain).join('\n'), /fix/)
-  assert.match(lines.map(plain).join('\n'), /read-only/)
-  assert.match(lines.map(plain).join('\n'), /10.0%/)
+  const narrow = lines.map(plain).join('\n')
+  assert.match(narrow, /read-only/)
+  assert.match(narrow, /10\.0%/)
+  // 够宽时分支段出现（换分支后立即更新）。
+  footer.invalidate()
+  assert.match(footer.render(120).map(plain).join('\n'), /fix/)
 })
 
 test('切换模型时立即移除旧窗口，异步返回顺序不会覆盖新模型容量', async () => {

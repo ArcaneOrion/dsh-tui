@@ -17,6 +17,7 @@
  */
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
@@ -118,6 +119,17 @@ export function shortSandboxMode(mode) {
 }
 
 /**
+ * HOME 前缀换成 `~`（与 pi 的底栏一致）。不匹配时原样返回。
+ * @param {string|undefined} target
+ * @param {string} [home]
+ */
+export function shortenHome(target, home = os.homedir()) {
+  if (typeof target !== 'string' || target === '') return undefined
+  if (typeof home !== 'string' || home === '' || !target.startsWith(home)) return target
+  return '~' + target.slice(home.length)
+}
+
+/**
  * 状态栏用量的配色档位。
  * @param {number|undefined} ratio - used / limit
  */
@@ -150,6 +162,43 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   let latestRouteCache
   let eventTail
   let observedSession
+
+  /**
+   * 机器指标（CPU / 内存 / 时间）。每秒最多采一次——footer 每帧都渲染，
+   * `os.cpus()` 会分配数组，不能每帧调；loadavg 本身很便宜。
+   */
+  const cpuCount = Math.max(1, os.cpus()?.length ?? 1)
+  let metricsCache = { at: 0, cpu: undefined, mem: undefined, clock: undefined }
+
+  function metrics(now) {
+    if (now - metricsCache.at < 1000) return metricsCache
+    let cpu
+    try {
+      const load = os.loadavg?.()[0]
+      if (Number.isFinite(load)) cpu = Math.max(0, Math.min(100, Math.round((load / cpuCount) * 100)))
+    } catch {
+      cpu = undefined
+    }
+    let mem
+    try {
+      const total = os.totalmem()
+      if (Number.isFinite(total) && total > 0) {
+        mem = Math.max(0, Math.min(100, Math.round(((total - os.freemem()) / total) * 100)))
+      }
+    } catch {
+      mem = undefined
+    }
+    const d = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+    metricsCache = {
+      at: now,
+      cpu,
+      mem,
+      clock: `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${week} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    }
+    return metricsCache
+  }
 
   /**
    * 最近一次请求**实际用的**路由（fallback）。
@@ -286,22 +335,55 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       // 当文件名显示出来。
       const activeCwd = getAgent()?.session?.header?.cwd ?? cwd
       const base = path.basename(activeCwd)
+      const machine = metrics(Date.now())
       return {
         model,
         thinking: effort,
         dir: base === '' ? activeCwd : base,
+        path: shortenHome(activeCwd),
         branch: readGitBranch(activeCwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: recordedLimit ?? (key === limitKey ? contextLimit : undefined) },
         sandbox: shortSandboxMode(sandboxMode()),
+        cpu: machine.cpu,
+        mem: machine.mem,
+        clock: machine.clock,
       }
     },
   }
 }
 
 /**
+ * 底栏色块段布局常量。
+ *
+ * 视觉对齐 Claude Code 的状态行：每段一块**饱和底色 + 浅色文字**，段间没有
+ * 分隔符，最后一段铺满剩余宽度。数据仍全部来自真实来源（缺就整段消失）。
+ */
+const SEG_PAD = 1
+/** 目录段左截断后至少保留的可见宽度。 */
+const DIR_MIN_WIDTH = 10
+
+/** 从左侧截断到 width 个显示列（保留尾部——路径尾部信息量最大）。 */
+export function truncateLeft(text, width) {
+  const chars = [...String(text ?? '')]
+  let out = ''
+  let used = 0
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    const w = visibleWidth(chars[i])
+    if (used + w > width) break
+    out = chars[i] + out
+    used += w
+  }
+  return out
+}
+
+/**
  * 默认底栏。
  *
  * 可替换实现点：`registry.setFooter(component)` 换掉它。
+ *
+ * 段顺序（左→右）：模型 · think · 用量 · 沙箱 · 路径 · 分支 · 会话 · 状态片段
+ * · CPU · MEM · 时间。窄屏按 priority 从低到高丢弃（1 = 最后丢），所以先消失
+ * 的是时间/内存/CPU，最后才动用用量与权限。
  */
 export class DefaultFooter {
   /**
@@ -325,45 +407,46 @@ export class DefaultFooter {
   }
 
   /**
-   * 把快照拼成分段列表。每段可以是 {text,tone} 或 {parts:[{text,tone}]}
-   * （一段内多色，比如 `dir` 标签青、目录名亮）。
+   * 把快照拼成色块段。
+   *
+   * @returns {Array<{id:string,text:string,bg:string,priority:number,flex?:boolean}>}
+   *   priority 1 = 最优先保留；flex 段可左截断。
    */
   buildSegments(snapshot) {
     const segments = []
+    const push = (id, text, bg, priority, extra = undefined) => {
+      if (typeof text !== 'string' || text === '') return
+      segments.push({ id, text, bg, priority, ...extra })
+    }
 
-    // 模型名：亮白（对照 pi，模型段是整条栏里最亮的一项）。
-    if (snapshot.model !== undefined) segments.push({ text: snapshot.model, tone: 'text' })
-    // 推理强度：`think:` 标签与档位同色暖黄。
-    if (snapshot.thinking !== undefined) segments.push({ text: `think:${snapshot.thinking}`, tone: 'thinkLabel' })
-    if (snapshot.dir !== undefined) {
-      segments.push({ parts: [{ text: 'dir ', tone: 'dirLabel' }, { text: snapshot.dir, tone: 'text' }] })
-    }
-    if (snapshot.branch !== undefined) {
-      segments.push({ parts: [{ text: '⎇ ', tone: 'branchLabel' }, { text: snapshot.branch, tone: 'branchLabel' }] })
-    }
+    push('model', snapshot.model, 'segBlue', 3)
+    if (snapshot.thinking !== undefined) push('think', `think:${snapshot.thinking}`, 'segAmber', 7)
 
     const tokens = snapshot.tokens
     if (tokens !== undefined) {
       const used = formatTokens(tokens.used)
       const limit = formatTokens(tokens.limit)
       if (used !== undefined) {
-        const ratio = tokens.limit === undefined ? undefined : tokens.used / tokens.limit
-        const percent = ratio === undefined ? undefined : ` (${(ratio * 100).toFixed(1)}%)`
+        const ratio = tokens.limit > 0 ? tokens.used / tokens.limit : undefined
+        const percent = ratio === undefined ? '' : ` (${(ratio * 100).toFixed(1)}%)`
         const text = limit === undefined ? `${used} tok` : `${used}/${limit}${percent}`
-        segments.push({ text, tone: tokenTone(ratio) })
+        const bg = ratio === undefined ? 'segGreen' : ratio >= 0.95 ? 'segRed' : ratio >= 0.8 ? 'segAmber' : 'segGreen'
+        push('usage', text, bg, 1)
       }
     }
 
     if (snapshot.sandbox !== undefined) {
-      segments.push({
-        text: snapshot.sandbox,
-        tone: snapshot.sandbox === 'yolo' ? 'warning' : 'muted',
-        separator: MODE_SEPARATOR,
-      })
+      push('sandbox', snapshot.sandbox, snapshot.sandbox === 'yolo' ? 'segRed' : 'segSlate', 2)
     }
 
-    // 注册表里的状态片段：调用方已自带配色，原样接在后面。
-    for (const text of this.registry.statusTexts()) segments.push({ text, tone: undefined })
+    // 路径优先用 ~ 缩写的完整路径（像 Claude Code 的状态行），缺了退回 basename。
+    push('dir', snapshot.path ?? snapshot.dir, 'segTeal', 4, { flex: true })
+    if (snapshot.branch !== undefined) push('branch', `⎇ ${snapshot.branch}`, 'segGreen', 5)
+    push('session', this.getSessionLabel(), 'segSlate', 11)
+    for (const text of this.registry.statusTexts()) push(`status:${text}`, text, 'segSlate', 6)
+    if (snapshot.cpu !== undefined) push('cpu', `CPU${snapshot.cpu}%`, 'segGreen', 8)
+    if (snapshot.mem !== undefined) push('mem', `MEM${snapshot.mem}%`, 'segBlue', 9)
+    if (snapshot.clock !== undefined) push('clock', snapshot.clock, 'segGray', 10)
 
     return segments
   }
@@ -371,32 +454,56 @@ export class DefaultFooter {
   render(width) {
     const theme = this.theme
     const snapshot = this.getSnapshot()
-    const segments = this.buildSegments(snapshot)
+    const statuses = this.registry.statusTexts()
     const sessionLabel = this.getSessionLabel()
 
-    const plain = JSON.stringify([width, snapshot, this.registry.statusTexts(), sessionLabel])
+    const plain = JSON.stringify([width, snapshot, statuses, sessionLabel])
     if (this.cache !== undefined && this.lastKey === plain) return this.cache
     this.lastKey = plain
 
-    const inner = Math.max(0, width - 2)
-    const used = formatTokens(snapshot.tokens?.used)
-    const limit = formatTokens(snapshot.tokens?.limit)
-    const ratio = snapshot.tokens?.limit > 0 ? snapshot.tokens.used / snapshot.tokens.limit : undefined
-    const percent = ratio === undefined ? '' : ` (${(ratio * 100).toFixed(1)}%)`
-    const usage = used === undefined ? '' : limit ? `${used}/${limit}${percent}` : `${used} tok`
-    const meter = ratio !== undefined && width >= 100
-      ? ' ' + '━'.repeat(Math.min(8, Math.max(0, Math.round(ratio * 8)))) + '·'.repeat(8 - Math.min(8, Math.max(0, Math.round(ratio * 8)))) : ''
-    const usageText = theme.fg(tokenTone(ratio), usage + meter)
-    const modelBudget = Math.max(0, inner - visibleWidth(usageText) - (usage ? 2 : 0))
-    const model = [snapshot.model, width >= 90 && snapshot.thinking ? `think:${snapshot.thinking}` : undefined].filter(Boolean).join(' · ')
-    const first = pair(theme.fg('muted', fit(model, modelBudget)), usageText, inner)
-    const mode = snapshot.sandbox ?? ''
-    const identity = [snapshot.dir ? `dir ${snapshot.dir}` : undefined, snapshot.branch ? `⎇ ${snapshot.branch}` : undefined,
-      width >= 110 ? sessionLabel : undefined, ...this.registry.statusTexts()].filter(Boolean).join(' · ')
-    const modeText = theme.fg(mode === 'yolo' ? 'warning' : 'dim', mode)
-    const identityBudget = Math.max(0, inner - visibleWidth(modeText) - (mode ? 2 : 0))
-    const second = pair(theme.fg('dim', fit(identity, identityBudget)), modeText, inner)
-    this.cache = [fit(' ' + first, width), fit(' ' + second, width)]
+    const kept = this.buildSegments(snapshot)
+    const segWidth = (segment) => visibleWidth(segment.text) + SEG_PAD * 2
+    const total = () => kept.reduce((sum, segment) => sum + segWidth(segment), 0)
+    const flexSeg = kept.find((segment) => segment.flex === true)
+    const flexPriority = flexSeg === undefined ? Number.POSITIVE_INFINITY : flexSeg.priority
+
+    // 1) 只丢**比目录段更不重要**的段（priority 数值更大 = 更先丢），
+    //    尽量让目录段以完整路径留下。比路径重要的段（用量/权限/模型）绝不为
+    //    路径让位——否则窄屏下会把用量挤掉，那是这条栏最该保住的东西。
+    for (const victim of [...kept].sort((a, b) => b.priority - a.priority)) {
+      if (total() <= width) break
+      if (victim === flexSeg || victim.priority <= flexPriority) continue
+      kept.splice(kept.indexOf(victim), 1)
+    }
+
+    // 2) 还超宽 → 目录段左截断：`…/plugin/DSH-TUI` 比 `~/AI/AI-D…` 有用得多。
+    if (flexSeg !== undefined && kept.includes(flexSeg) && total() > width) {
+      const others = kept.filter((segment) => segment !== flexSeg).reduce((sum, segment) => sum + segWidth(segment), 0)
+      const room = width - others - SEG_PAD * 2
+      if (room >= DIR_MIN_WIDTH) flexSeg.text = '…' + truncateLeft(flexSeg.text, room - 1)
+    }
+
+    // 3) 还是放不下：丢目录段，再继续按优先级丢，直到放得下。
+    if (flexSeg !== undefined && kept.includes(flexSeg) && total() > width) kept.splice(kept.indexOf(flexSeg), 1)
+    for (const victim of [...kept].sort((a, b) => b.priority - a.priority)) {
+      if (total() <= width) break
+      kept.splice(kept.indexOf(victim), 1)
+    }
+
+    // 4) 连续色块：每段左右各一个空格内边距；剩余宽度用尾段底色铺满。
+    //    尾段是告警/危险色时改用中性色——否则窄屏下会拖出一条刺眼的红/黄长条。
+    let line = ''
+    for (const segment of kept) {
+      line += theme.bg(segment.bg, theme.fg('segText', ' '.repeat(SEG_PAD) + segment.text + ' '.repeat(SEG_PAD)))
+    }
+    const filled = visibleWidth(line)
+    if (filled < width) {
+      const tail = kept[kept.length - 1]
+      const tailBg = tail === undefined || tail.bg === 'segRed' || tail.bg === 'segAmber' ? 'segSlate' : tail.bg
+      line += theme.bg(tailBg, ' '.repeat(width - filled))
+    }
+
+    this.cache = [truncateToWidth(line, width, '')]
     return this.cache
   }
 }

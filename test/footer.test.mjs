@@ -16,7 +16,7 @@ import { test } from 'node:test'
 
 import { visibleWidth } from '@earendil-works/pi-tui'
 
-import { createFooterInfo, DefaultFooter, formatTokens, readGitBranch, shortSandboxMode } from '../src/footer.js'
+import { createFooterInfo, DefaultFooter, formatTokens, readGitBranch, shortSandboxMode, shortenHome } from '../src/footer.js'
 import { createRegistry } from '../src/registry.js'
 import { createTheme } from '../src/theme.js'
 
@@ -108,25 +108,63 @@ function makeFooter(snapshot, { sessionLabel } = {}) {
   })
 }
 
-test('快照齐全时五段都在，且顺序为 模型/目录/分支/用量/沙箱', () => {
+test('色块段顺序与底色：模型/用量/沙箱/路径/分支', () => {
   const snapshot = { model: 'p/m', dir: 'D', branch: 'main', tokens: { used: 1000, limit: 10_000 }, sandbox: 'yolo' }
   const footer = makeFooter(snapshot)
   const segments = footer.buildSegments(snapshot)
-  // dir/branch 段是多色 parts（标签与值分色），取拼接后的纯文本比对。
-  assert.deepEqual(
-    segments.map((s) => (s.parts === undefined ? s.text : s.parts.map((p) => p.text).join(''))),
-    ['p/m', 'dir D', '⎇ main', '1.0k/10.0k (10.0%)', 'yolo'],
-  )
+  assert.deepEqual(segments.map((s) => s.text), ['p/m', '1.0k/10.0k (10.0%)', 'yolo', 'D', '⎇ main'])
+  assert.deepEqual(segments.map((s) => s.bg), ['segBlue', 'segGreen', 'segRed', 'segTeal', 'segGreen'])
+  // 用量 priority 最小 = 最后才丢（窄屏优先保留上下文容量与权限）。
+  assert.equal(segments.find((s) => s.id === 'usage').priority, 1)
+  assert.equal(segments.find((s) => s.id === 'sandbox').priority, 2)
+  // 路径段可左截断。
+  assert.equal(segments.find((s) => s.id === 'dir').flex, true)
 })
 
-test('渲染文本包含真实数值与百分比', () => {
+test('渲染成一行连续色块：真实数值 + 最后一段铺满整行', () => {
   const footer = makeFooter({ model: 'p/m', dir: 'D', branch: 'main', tokens: { used: 12_345, limit: 1_000_000 }, sandbox: 'yolo' })
-  const out = stripAnsi(footer.render(120).join('\n'))
+  const lines = footer.render(120)
+  assert.equal(lines.length, 1, '状态行只有一行')
+  assert.equal(visibleWidth(lines[0]), 120, '最后一段的底色必须铺满整行')
+  const out = stripAnsi(lines[0])
   assert.match(out, /p\/m/)
-  assert.match(out, /dir D/)
+  assert.match(out, /D/)
   assert.match(out, /⎇ main/)
   assert.match(out, /12\.3k\/1\.0M \(1\.2%\)/)
   assert.match(out, /yolo/)
+  // 每段都带自己的底色（48;... = 背景色）
+  const bgs = lines[0].match(/\x1b\[48;[0-9;]+m/g) ?? []
+  assert.ok(bgs.length >= 5, `每段都应有底色，实际 ${bgs.length}`)
+})
+
+test('窄屏按优先级丢弃：时间/内存/CPU 先消失，用量与权限留下（路径左截断）', () => {
+  const snapshot = { model: 'p/m', path: '~/AI/AI-DSH/plugin/model-channel-manager', branch: 'main',
+    tokens: { used: 1000, limit: 10_000 }, sandbox: 'yolo', cpu: 41, mem: 60, clock: '10/01 周四 17:43' }
+  const footer = makeFooter(snapshot)
+  const wide = stripAnsi(footer.render(140)[0])
+  assert.match(wide, /CPU41%/)
+  assert.match(wide, /MEM60%/)
+  assert.match(wide, /17:43/)
+
+  footer.invalidate()
+  const narrow = stripAnsi(footer.render(40)[0])
+  assert.match(narrow, /1\.0k\/10\.0k/, '用量必须留下')
+  assert.doesNotMatch(narrow, /CPU41%/, 'CPU 先丢')
+  assert.doesNotMatch(narrow, /17:43/, '时间先丢')
+  assert.equal(visibleWidth(footer.render(40)[0]), 40)
+})
+
+test('路径段超宽时先左截断，保留尾部', () => {
+  const snapshot = { path: '~/AI/AI-DSH/plugin/model-channel-manager', branch: 'main', cpu: 41 }
+  const footer = makeFooter(snapshot)
+  // 60 列放得下（40+8+8=56），34 列才触发左截断：留尾部、前面加省略号。
+  assert.doesNotMatch(stripAnsi(footer.render(60)[0]), /…/)
+  footer.invalidate()
+  const line = footer.render(34)[0]
+  const out = stripAnsi(line)
+  assert.match(out, /…/, '截断要有省略号')
+  assert.match(out, /channel-manager/, '路径尾部信息量最大，必须保留')
+  assert.equal(visibleWidth(line), 34)
 })
 
 test('缺数据源的段整段消失，不显示占位符', () => {
@@ -149,8 +187,12 @@ test('没有模型窗口上限时只显示已用量，不编一个分母', () =>
 test('用量高时切到告警/错误配色', () => {
   const warn = makeFooter({ tokens: { used: 850_000, limit: 1_000_000 } })
   assert.match(warn.render(120).join('\n'), /\(85\.0%\)/)
+  assert.equal(warn.buildSegments({ tokens: { used: 850_000, limit: 1_000_000 } })[0].bg, 'segAmber')
   const err = makeFooter({ tokens: { used: 990_000, limit: 1_000_000 } })
   assert.match(err.render(120).join('\n'), /\(99\.0%\)/)
+  assert.equal(err.buildSegments({ tokens: { used: 990_000, limit: 1_000_000 } })[0].bg, 'segRed')
+  const ok = makeFooter({ tokens: { used: 1000, limit: 1_000_000 } })
+  assert.equal(ok.buildSegments({ tokens: { used: 1000, limit: 1_000_000 } })[0].bg, 'segGreen')
 })
 
 test('注册表里的状态片段被接在末尾', () => {
@@ -161,7 +203,7 @@ test('注册表里的状态片段被接在末尾', () => {
   assert.match(out, /EXT/)
 })
 
-test('会话短标签右对齐出现', () => {
+test('会话短标签作为一段出现', () => {
   const footer = makeFooter({ model: 'p/m' }, { sessionLabel: 'abcd1234' })
   const out = footer.render(120).join('\n')
   assert.match(out, /abcd1234/)
@@ -169,12 +211,13 @@ test('会话短标签右对齐出现', () => {
 
 test('任何宽度下都不溢出', () => {
   const footer = makeFooter(
-    { model: 'very-long-provider/very-long-model-name', dir: 'a-very-long-directory-name', branch: 'feature/very-long-branch', tokens: { used: 990_000, limit: 1_000_000 }, sandbox: 'yolo' },
+    { model: 'very-long-provider/very-long-model-name', path: '~/a/very/long/directory/name', branch: 'feature/very-long-branch', tokens: { used: 990_000, limit: 1_000_000 }, sandbox: 'yolo', cpu: 41, mem: 60, clock: '10/01 周四 17:43' },
     { sessionLabel: 'abcd1234' },
   )
   for (const width of [20, 40, 60, 80, 120, 200]) {
     footer.invalidate()
     const lines = footer.render(width)
+    assert.equal(lines.length, 1)
     for (const line of lines) {
       assert.ok(visibleWidth(line) <= width, `宽度 ${width} 下溢出：${JSON.stringify(line)}`)
     }
@@ -204,6 +247,20 @@ test('createFooterInfo 在服务全缺时也能给出快照且不抛错', () => 
   assert.equal(snap.dir, 'tmp')
   assert.equal(snap.tokens, undefined)
   assert.equal(snap.sandbox, undefined)
+  // 机器指标：CPU/内存可能因平台取不到，但时间一定有；路径做 ~ 缩写。
+  assert.equal(typeof snap.clock, 'string')
+  assert.match(snap.clock, /^\d{2}\/\d{2} 周. \d{2}:\d{2}$/)
+  assert.equal(snap.path, '/tmp')
+  assert.ok(snap.cpu === undefined || (snap.cpu >= 0 && snap.cpu <= 100))
+  assert.ok(snap.mem === undefined || (snap.mem >= 0 && snap.mem <= 100))
+})
+
+test('shortenHome 把 HOME 前缀换成 ~，不匹配时原样返回', () => {
+  assert.equal(shortenHome('/home/u/project', '/home/u'), '~/project')
+  assert.equal(shortenHome('/home/u', '/home/u'), '~')
+  assert.equal(shortenHome('/opt/x', '/home/u'), '/opt/x')
+  assert.equal(shortenHome('', '/home/u'), undefined)
+  assert.equal(shortenHome(undefined, '/home/u'), undefined)
 })
 
 // ── 真实路由（读 request/header）─────────────────────────────────────────
