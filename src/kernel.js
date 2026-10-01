@@ -562,6 +562,56 @@ export function createRuntimeAccess(ctx, getAgent) {
    */
   const sessionsCache = new Map()
   const SESSIONS_TTL_MS = 20_000
+
+  /**
+   * 权限预设（沙箱模式 + 审批策略的组合，由 @deepseek-ai/dsh-permission-presets
+   * 提供）。服务缺失时 available() 为 false——调用方据此隐藏入口，而不是报错。
+   * set/cycle 写的是会话事件，所以底栏的权限段与后续工具调用会自动跟随。
+   */
+  const permissionService = () => ctx.get('permissionPresets')
+  function permissionAvailable() {
+    const service = permissionService()
+    return typeof service?.catalog === 'function' && typeof service?.set === 'function'
+  }
+  function permissionCatalog() {
+    try {
+      return permissionService()?.catalog?.()
+    } catch {
+      return undefined
+    }
+  }
+  function permissionCurrent() {
+    const service = permissionService()
+    if (typeof service?.current !== 'function') return undefined
+    try {
+      return service.current(agent().session)
+    } catch {
+      return undefined
+    }
+  }
+  function permissionResolve(name) {
+    try {
+      return permissionService()?.resolve?.(name)
+    } catch {
+      return undefined
+    }
+  }
+  function permissionSet(name) {
+    const service = permissionService()
+    if (typeof service?.set !== 'function') throw new Error('当前运行时没有权限预设服务')
+    service.set(agent().session, name)
+    return service.current(agent().session)
+  }
+  function permissionCycle() {
+    if (!permissionAvailable()) throw new Error('当前运行时没有权限预设服务')
+    const options = permissionCatalog()?.options ?? []
+    if (options.length === 0) throw new Error('没有可用的权限预设')
+    const names = options.map((option) => option.value)
+    // 当前值不匹配任何预设时（custom）从第一档开始。
+    const next = names[(names.indexOf(permissionCurrent()) + 1) % names.length]
+    return { name: permissionSet(next), option: permissionService()?.optionOf?.(next) }
+  }
+
   return {
     async sessions({ all = false, signal } = {}) {
       const current = agent()
@@ -610,6 +660,15 @@ export function createRuntimeAccess(ctx, getAgent) {
         queued: current.inbox?.nextTurn?.length ?? 0,
         steering: current.inbox?.nextStep?.length ?? 0,
         sessionId: String(current.session.id), cwd: current.session.header?.cwd }
+    },
+    /** 权限预设：Shift+Tab 与 /permission 都走这里。 */
+    permission: {
+      available: permissionAvailable,
+      catalog: permissionCatalog,
+      current: permissionCurrent,
+      resolve: permissionResolve,
+      set: permissionSet,
+      cycle: permissionCycle,
     },
     context() {
       const session = agent().session

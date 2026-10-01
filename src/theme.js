@@ -139,14 +139,14 @@ export const BLUE_TOKENS = Object.freeze({
   codeNumber: '#ff9e64',
 
   // 底栏色块（Claude Code 状态行样式：饱和底色 + 浅色文字，段间无分隔）
-  segText: '#eaf2fb',
-  segBlue: '#2f6fbf',
-  segTeal: '#1f7f8f',
-  segGreen: '#2f9e4f',
-  segAmber: '#9a6a1f',
-  segRed: '#a83a45',
-  segSlate: '#44566e',
-  segGray: '#5a6672',
+  segText: '#f1f5f9',
+  segBlue: '#2563eb',
+  segTeal: '#0d7f8f',
+  segGreen: '#1f9d55',
+  segAmber: '#b45309',
+  segRed: '#dc2626',
+  segSlate: '#475569',
+  segGray: '#64748b',
 })
 
 /**
@@ -218,13 +218,13 @@ export const PI_TOKENS = Object.freeze({
 
   // 底栏色块（同上：饱和底色 + 浅色文字）
   segText: '#fff8d6',
-  segBlue: '#2f6f9f',
-  segTeal: '#2a7a7a',
-  segGreen: '#2f8f6f',
-  segAmber: '#9a7a2f',
-  segRed: '#a04a4a',
-  segSlate: '#44566e',
-  segGray: '#5a6a7a',
+  segBlue: '#1f6f9f',
+  segTeal: '#0d7f8f',
+  segGreen: '#1f8f6f',
+  segAmber: '#b47a1f',
+  segRed: '#c2453a',
+  segSlate: '#475569',
+  segGray: '#64748b',
 })
 
 /**

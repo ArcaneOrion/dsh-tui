@@ -49,6 +49,7 @@ npm run demo
 | `/model provider/model` | 校验后写入会话事件，下一步生效 |
 | `/preset` | standard / ptc / minimal / cordis；仅内核认可的空白会话可切换。`/preset create` 进入创造模式（切到 cordis 预设，由 Agent 起草并安装声明预设的 bundle） |
 | `/pane` | 文件编辑右栏：`/pane`（auto→on→off 轮换）或 `/pane auto\|on\|off`。Edit/Write 运行时右侧出现 diff，回合结束保留最后状态；窄终端（<96 列）自动收起 |
+| `Shift+Tab`、`/permission` | 权限预设循环 / 选择：`read-only` → `workspace-write` → `danger-full-access`，每档同时定沙箱模式与审批策略（切换写进会话日志，底栏权限段与后续工具调用立即跟随）；`/permission <name>` 直接切 |
 | `/theme` | 选择主题配色：`/theme` 弹选择器，`/theme blue\|pi` 直接切。热切即时生效并记住（默认 blue：深蓝底 + 蓝 accent；pi：墨蓝底 + 暖黄） |
 | `/help` | TUI 与原生命令，包括已启用的压缩、计划、目标等功能 |
 | `/doctor` | 真实服务接入诊断 |

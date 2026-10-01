@@ -509,7 +509,8 @@ export function createApp(options) {
       return undefined
     }
     if (!hasModalOverlay()) {
-      const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking']]
+      // Shift+Tab 循环权限预设（Claude Code 同款手感）；Ctrl+K/O/T 是工作台快捷键。
+      const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking'], ['shift+tab', '/permission cycle']]
       for (const [key, command] of shortcuts) {
         if (matchesKey(data, key)) {
           if (!isKeyRepeat(data)) onCommand?.(command)

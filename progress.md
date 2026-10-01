@@ -1,5 +1,13 @@
 # 进度记录
 
+## 第八轮
+
+- 用户反馈两件事：①状态行色块再明显一些；②「似乎没有权限管理」，想要 Claude Code 那样 Shift+Tab 控权限。
+- 权限管理先求证：`sandboxPolicy` 只有读方法（`resolve`/`overrideOf`），模式来自会话日志的 `sandbox/mode` 事件；真正管切换的是 `@deepseek-ai/dsh-permission-presets` 的 `ctx.permissionPresets`（`catalog()` / `current(session)` / `set(session,name)` / `resolve(name)`），预设 = 沙箱模式 + 审批策略的组合。**dsh-base 本来就挂了这一行**（三档预设与官方 web 一致）——服务一直在，缺的只是 TUI 入口。我一开始在 bundle 里又加了一行，发现是重复 id 后撤掉。
+- 实现：Shift+Tab 循环权限预设（`\x1b[Z`、kitty CSI-u、modifyOtherKeys 三种序列 pi-tui 都认）、`/permission` 选择器、`/permission <name>` 直切；`kernel.runtime.permission` 提供 available/catalog/current/resolve/set/cycle，服务缺失时入口隐藏而不是报错。切换写的是会话事件，底栏权限段与后续工具调用自动跟随。
+- 色块更明显：段色板提饱和（蓝 `#2563eb`、绿 `#1f9d55`、红 `#dc2626`、青 `#0d7f8f`、琥珀 `#b45309`、灰 `#64748b`、浅字 `#f1f5f9`），pi 主题同步。
+- 验证（真机 tmux）：Shift+Tab 依次 `workspace-write → danger-full-access → read-only → workspace-write` 环绕，底栏权限段与通知同步；`/permission` 选择器三档带 ✓；140 列底栏含 CPU/MEM/时间。333 项测试通过（+2：权限访问器与环绕、Shift+Tab 绑定）；check / audit 通过。
+
 ## 第七轮
 
 - 用户给出 Claude Code 状态行截图，要求「输入栏下面的 UI 仿照它」。**先把图真正读进来**（用图片工具读附件，而不是凭印象），确认设计要素：一行**连续色块**、每段饱和底色 + 浅色文字、段间无缝、每段左右各一空格内边距、**末段铺满整行**；段内容为 路径 · 分支 · CPU · MEM · 时间。

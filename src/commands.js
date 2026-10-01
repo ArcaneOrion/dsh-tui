@@ -32,6 +32,7 @@ export const LOCAL_COMMANDS = Object.freeze([
   { name: 'thinking', description: '展开或折叠思考全文 · Ctrl+T' },
   { name: 'pane', description: '文件编辑右栏：/pane auto|on|off' },
   { name: 'theme', description: '选择主题配色（/theme）' },
+  { name: 'permission', description: '权限预设（沙箱 + 审批）：/permission 选择 · Shift+Tab 循环' },
   { name: 'exit', description: '退出' },
   { name: 'quit', description: '退出（同 /exit）' },
 ])

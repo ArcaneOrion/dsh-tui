@@ -186,3 +186,20 @@ test('恢复会话后即使 seq 相同也重新计算用量与工作目录', () 
   assert.equal(snapshot.tokens.used, 456)
   assert.equal(snapshot.dir, 'two')
 })
+
+test('Shift+Tab 触发权限循环（Claude Code 同款手感）', () => {
+  const commands = []
+  const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal: memoryTerminal(),
+    getState: () => ({}), getSnapshot: () => ({}), onCommand: (line) => commands.push(line) })
+  try {
+    app.tui.handleInput('\x1b[Z')
+    assert.deepEqual(commands, ['/permission cycle'], 'Shift+Tab 应走 /permission cycle')
+    // kitty 键盘协议下的 Shift+Tab 也要认（CSI 9;2u）
+    app.tui.handleInput('\x1b[9;2u')
+    assert.deepEqual(commands, ['/permission cycle', '/permission cycle'])
+    // 弹窗打开时不抢键
+    commands.length = 0
+    app.tui.handleInput('\x1b[Z')
+    assert.equal(commands.length, 1)
+  } finally { app.dispose() }
+})

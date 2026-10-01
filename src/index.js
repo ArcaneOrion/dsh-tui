@@ -536,6 +536,59 @@ export async function apply(ctx) {
         app?.requestRender?.()
         return
       }
+      if (parsed.name === 'permission') {
+        // 权限预设 = 沙箱模式 + 审批策略的组合（read-only / workspace-write /
+        // danger-full-access）。切换写的是会话事件，底栏权限段与后续工具调用
+        // 自动跟随。Shift+Tab 走同一条路（/permission cycle）。
+        const runtime = kernel.runtime
+        if (runtime.permission?.available?.() !== true) {
+          app?.notice?.('当前 profile 未启用权限预设（需要 @deepseek-ai/dsh-permission-presets 行）')
+          return
+        }
+        const describe = (name) => {
+          const spec = runtime.permission.resolve?.(name)
+          return spec === undefined ? String(name) : `${name} · 沙箱 ${spec.sandbox} · 审批 ${spec.approval}`
+        }
+        const apply = (name) => {
+          try {
+            const applied = runtime.permission.set(name)
+            app?.notice?.(`权限已切换：${describe(applied)}`)
+            app?.requestRender?.()
+          } catch (error) {
+            app?.notice?.(`权限切换失败：${error?.message ?? error}`)
+          }
+        }
+
+        if (parsed.rest === 'cycle' || parsed.rest === 'next') {
+          try {
+            const result = runtime.permission.cycle()
+            app?.notice?.(`权限已切换：${describe(result?.name)}`)
+            app?.requestRender?.()
+          } catch (error) {
+            app?.notice?.(`权限切换失败：${error?.message ?? error}`)
+          }
+          return
+        }
+        if (parsed.rest !== '') {
+          apply(parsed.rest)
+          return
+        }
+
+        const catalog = runtime.permission.catalog()
+        const currentName = runtime.permission.current()
+        const options = (catalog?.options ?? []).map((option) => ({
+          value: option.value,
+          label: `${option.name ?? option.value}${option.value === currentName ? '  ✓' : ''}`,
+          description: option.description ?? describe(option.value),
+        }))
+        if (options.length === 0) {
+          app?.notice?.('没有可用的权限预设')
+          return
+        }
+        const chosen = await app.choose({ title: '权限预设', detail: '沙箱模式 + 审批策略 · Shift+Tab 循环切换', options })
+        if (chosen !== undefined) apply(chosen)
+        return
+      }
       return
     }
 

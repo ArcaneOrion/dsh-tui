@@ -221,3 +221,33 @@ test('/resume 的会话列表有短 TTL 缓存：连续读取只扫一次目录'
   await runtime.sessions({ all: true })
   assert.equal(listCalls, 2, '不同范围是不同缓存键')
 })
+
+test('权限预设：catalog/current/set/cycle 与环绕，服务缺失时如实降级', async () => {
+  let current = 'workspace-write'
+  const calls = []
+  const service = {
+    catalog: () => ({ options: [
+      { value: 'read-only', name: '只读' },
+      { value: 'workspace-write', name: '工作区可写' },
+      { value: 'danger-full-access', name: '完全放开' },
+    ], defaultPreset: 'workspace-write' }),
+    current: () => current,
+    set: (session, name) => { calls.push([session.id, name]); current = name },
+    resolve: (name) => ({ sandbox: name, approval: name === 'danger-full-access' ? 'never' : 'ask' }),
+    optionOf: (name) => ({ value: name, name }),
+  }
+  const runtime = createRuntimeAccess({ get: (n) => n === 'permissionPresets' ? service : undefined }, () => ({ session: { id: 's1' } }))
+  assert.equal(runtime.permission.available(), true)
+  assert.equal(runtime.permission.current(), 'workspace-write')
+  assert.equal(runtime.permission.cycle().name, 'danger-full-access', '按表顺序循环')
+  assert.deepEqual(calls, [['s1', 'danger-full-access']], '切换必须落在会话上')
+  assert.equal(runtime.permission.cycle().name, 'read-only', '到末尾环绕回第一档')
+  current = 'custom'
+  assert.equal(runtime.permission.cycle().name, 'read-only', 'custom（不匹配任何预设）时从第一档开始')
+  assert.deepEqual(runtime.permission.resolve('danger-full-access'), { sandbox: 'danger-full-access', approval: 'never' })
+
+  const bare = createRuntimeAccess({ get: () => undefined }, () => ({ session: { id: 's' } }))
+  assert.equal(bare.permission.available(), false, '服务缺失时入口应隐藏而不是报错')
+  assert.equal(bare.permission.catalog(), undefined)
+  assert.throws(() => bare.permission.cycle(), /没有权限预设服务/)
+})
