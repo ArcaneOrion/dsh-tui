@@ -1,5 +1,13 @@
 # 进度记录
 
+## 第四轮
+
+- 用户反馈：配色还是蓝色为主，或提供 `/theme` 选择。两者都做：**默认改回蓝色（Tokyo Night 风味，深蓝底 + 蓝 accent）**，并加 `/theme` 多主题热切换。
+- theme.js 从单张 token 表改成**注册表 + 热切**：`createTheme()` 返回的对象持有可替换的 `current` token 表，`fg/bg` 每次调用都读它，因此 markdown/editor/selectList（闭包同一组 fg）也自动跟随。`/theme` 切换只需 `setTokens` + 清各级缓存（chat 的帧缓存与行缓存、working、footer、右栏），不用重建组件、不改签名。
+- markdown 映射改用语义 token（link/bullet/codeFg/codeBorder）——每套主题给各自的值：蓝主题链接是蓝、pi 主题是 cyan，映射里不写死色相。
+- `/theme` 命令：弹选择器或 `/theme <id>` 直切，选择写入 `~/.dsh-tui/config.json`（prefs 新增 `theme` 字段，非法值丢弃），下次启动恢复。
+- 324 项测试通过（+8：热切/注册表/prefs 往返/app.setTheme/换主题后重绘用新 token）。实机 PTY 验证：无 prefs 启动 34 处蓝 accent、pi accent 0 处；`/theme pi` 后活视口用 pi token 重绘（pi muted/border/dim/accent 均出现）且落盘 `{"theme":"pi"}`。
+
 ## 第三轮
 
 - 用户反馈：去掉「❯ 你」这类文字角色标签（幼稚），用户输入 / 思考 / 工具调用改用**图层**区分；视觉对齐本机 pi（输入框、布局、配色），参考 `@earendil-works/pi-coding-agent` dist 与用户调的 `~/.pi/agent/themes/pi-theme.json`；文件编辑参考 Claude Code 在右侧划区域显示 diff。

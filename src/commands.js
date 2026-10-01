@@ -31,6 +31,7 @@ export const LOCAL_COMMANDS = Object.freeze([
   { name: 'agents', description: '查看当前会话的子 Agent' },
   { name: 'thinking', description: '展开或折叠思考全文 · Ctrl+T' },
   { name: 'pane', description: '文件编辑右栏：/pane auto|on|off' },
+  { name: 'theme', description: '选择主题配色（/theme）' },
   { name: 'exit', description: '退出' },
   { name: 'quit', description: '退出（同 /exit）' },
 ])

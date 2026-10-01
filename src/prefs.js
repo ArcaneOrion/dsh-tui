@@ -25,6 +25,8 @@ function defaults() {
     model: undefined,
     /** 上次用的 provider。 */
     provider: undefined,
+    /** 上次选的主题 id（THEMES 的键）。 */
+    theme: undefined,
   }
 }
 
@@ -34,6 +36,7 @@ function sanitize(raw) {
   if (raw === null || typeof raw !== 'object') return out
   if (typeof raw.model === 'string' && raw.model !== '') out.model = raw.model
   if (typeof raw.provider === 'string' && raw.provider !== '') out.provider = raw.provider
+  if (typeof raw.theme === 'string' && raw.theme !== '') out.theme = raw.theme
   return out
 }
 

@@ -32,7 +32,7 @@ import { createKernel } from './kernel.js'
 import { installDefaultRenderers } from './messages.js'
 import { applySessionEvent, createView } from './projection.js'
 import { createRegistry } from './registry.js'
-import { createTheme } from './theme.js'
+import { createTheme, listThemes, tokensForTheme, THEMES, DEFAULT_THEME_ID } from './theme.js'
 import { createWorkbench } from './workbench.js'
 import { createSessionSwitcher } from './session-switch.js'
 
@@ -80,7 +80,12 @@ export async function apply(ctx) {
   const appliedSavedModel = startup.resume === undefined && startup.model === undefined && typeof saved.model === 'string' && saved.model.includes('/')
   const effectiveStartup = appliedSavedModel ? { ...startup, model: saved.model } : startup
 
-  const theme = createTheme()
+  // 主题：上次选的优先（未知 id 退回默认）。theme 对象支持热切，/theme
+  // 运行中换 token 表即可，不必重启。
+  let currentThemeId = typeof saved.theme === 'string' && THEMES[saved.theme] !== undefined
+    ? saved.theme
+    : DEFAULT_THEME_ID
+  const theme = createTheme(tokensForTheme(currentThemeId))
   const registry = createRegistry()
   const view = createView()
   const disposeDefaultRenderers = installDefaultRenderers(registry)
@@ -485,6 +490,42 @@ export async function apply(ctx) {
         app?.setPaneMode?.(next)
         const hint = { auto: '有文件编辑时出现，回合结束保留最后状态（默认）', on: '常驻右栏', off: '关闭' }[next]
         app?.notice?.(`文件编辑右栏：${next} · ${hint}`)
+        app?.requestRender?.()
+        return
+      }
+      if (parsed.name === 'theme') {
+        // 带参数直接切（/theme pi），否则弹选择器。切换是热切：token 表整张
+        // 替换，活视口与后续渲染立即用新配色（已推进 scrollback 的历史行不变，
+        // 这是终端本身的限制，pi 也一样）。
+        const apply = (id) => {
+          const applied = app?.setTheme?.(id)
+          if (applied === undefined) return undefined
+          currentThemeId = applied
+          const result = prefs.write({ theme: applied })
+          return { applied, remembered: result.ok }
+        }
+
+        if (parsed.rest !== '') {
+          const result = apply(parsed.rest)
+          if (result === undefined) {
+            app?.notice?.('/theme 不可用（界面尚未就绪）')
+            return
+          }
+          app?.notice?.(`主题：${result.applied}${result.remembered ? '（已记住）' : `（偏好保存失败：${prefs.file}）`}`)
+          app?.requestRender?.()
+          return
+        }
+
+        const options = listThemes().map((t) => ({
+          value: t.id,
+          label: `${t.name}${t.id === currentThemeId ? '  ✓' : ''}`,
+          description: t.description,
+        }))
+        const chosen = await app.choose({ title: '选择主题', options })
+        if (chosen === undefined) return
+        const result = apply(chosen)
+        if (result === undefined) return
+        app?.notice?.(`主题已切换到 ${result.applied}${result.remembered ? '，已记住' : `（偏好保存失败：${prefs.file}）`}`)
         app?.requestRender?.()
         return
       }

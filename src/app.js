@@ -28,6 +28,7 @@ import { WidgetPlacement } from './registry.js'
 import { WorkbenchEditor } from './composer.js'
 import { EditPane } from './edit-pane.js'
 import { fit } from './layout.js'
+import { tokensForTheme, THEMES, DEFAULT_THEME_ID } from './theme.js'
 
 /** 默认的工作动画帧。 */
 const DEFAULT_WORKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -530,6 +531,28 @@ export function createApp(options) {
       tui.requestRender()
     },
     getPaneMode: () => pane.mode,
+    /**
+     * 切换主题（热切）。token 表整张替换：所有持有同一个 theme 引用的组件
+     * （chat / working / footer / editor / 右栏 / banner）下次渲染自动用新表，
+     * 这里只负责清掉「颜色已经烤进字符串」的各级缓存，并触发重绘。
+     *
+     * @param {string} id - THEMES 里的主题 id；未知 id 退回默认主题
+     * @returns {string} 实际生效的主题 id
+     */
+    setTheme: (id) => {
+      const effective = THEMES[id] === undefined ? DEFAULT_THEME_ID : id
+      theme.setTokens(tokensForTheme(effective))
+      // 行级缓存（rowCache）里存的是带旧 ANSI 的字符串，必须整清；
+      // chat.invalidate() 同时清帧缓存与行缓存。
+      chat.invalidate()
+      working.invalidate()
+      footer?.invalidate?.()
+      editPane.invalidate()
+      tui.requestRender()
+      return effective
+    },
+    /** 当前生效的 token 表（诊断与测试用）。 */
+    getThemeTokens: () => theme.tokens,
     /** 弹一个选择框，返回选中值或 undefined。供人机回环使用。 */
     choose: prompter.choose,
     /** 弹一个文本输入框，返回输入内容或 undefined。 */

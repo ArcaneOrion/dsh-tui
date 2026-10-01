@@ -22,9 +22,19 @@ test('defaultConfigDir 默认在 ~/.dsh-tui，可被 DSH_TUI_HOME 覆盖', () =>
   assert.equal(defaultConfigDir({ DSH_TUI_HOME: '/tmp/x' }), '/tmp/x')
 })
 
+test('theme 偏好能写入读回，非法值被丢弃', () => {
+  const dir = tempDir()
+  const prefs = createPrefs({ dir })
+  assert.equal(prefs.read().theme, undefined)
+  assert.equal(prefs.write({ theme: 'pi' }).ok, true)
+  assert.equal(prefs.read().theme, 'pi')
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ theme: 42 }))
+  assert.equal(createPrefs({ dir }).read().theme, undefined)
+})
+
 test('文件不存在时读出默认值', () => {
   const prefs = createPrefs({ dir: tempDir() })
-  assert.deepEqual(prefs.read(), { model: undefined, provider: undefined })
+  assert.deepEqual(prefs.read(), { model: undefined, provider: undefined, theme: undefined })
 })
 
 test('写入后能读回来，并且真的落盘', () => {
@@ -56,13 +66,13 @@ test('文件损坏时退回默认值，不抛错', () => {
   fs.writeFileSync(path.join(dir, 'config.json'), '{ 这不是合法 JSON')
   const prefs = createPrefs({ dir })
   assert.doesNotThrow(() => prefs.read())
-  assert.deepEqual(prefs.read(), { model: undefined, provider: undefined })
+  assert.deepEqual(prefs.read(), { model: undefined, provider: undefined, theme: undefined })
 })
 
 test('字段类型不对时被丢弃', () => {
   const dir = tempDir()
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ model: 42, provider: { a: 1 } }))
-  assert.deepEqual(createPrefs({ dir }).read(), { model: undefined, provider: undefined })
+  assert.deepEqual(createPrefs({ dir }).read(), { model: undefined, provider: undefined, theme: undefined })
 })
 
 test('目录不可写时写入静默失败，读取仍可用', () => {

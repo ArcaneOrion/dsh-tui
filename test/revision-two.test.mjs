@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { visibleWidth } from '@earendil-works/pi-tui'
-import { createApp } from '../src/app.js'
+import { createApp, ChatView } from '../src/app.js'
 import { createBanner } from '../src/banner.js'
-import { createTheme } from '../src/theme.js'
+import { createTheme, BLUE_TOKENS, PI_TOKENS } from '../src/theme.js'
 import { createRegistry } from '../src/registry.js'
 import { createView } from '../src/projection.js'
 import { createWorkbench } from '../src/workbench.js'
 import { createRuntimeAccess } from '../src/kernel.js'
 import { createSessionSwitcher } from '../src/session-switch.js'
 import { createFooterInfo } from '../src/footer.js'
-import { userRenderer, assistantRenderer } from '../src/messages.js'
+import { userRenderer, assistantRenderer, installDefaultRenderers } from '../src/messages.js'
 import { memoryTerminal } from '../scripts/fixtures.mjs'
 
 const theme = createTheme()
@@ -67,6 +67,33 @@ test('用户与助手靠图层区分：用户是纯底色块，助手无底色�
   assert.doesNotMatch(assistant, /\x1b\[48;/)
   assert.doesNotMatch(plain(assistant), /●|DeepSeek/)
   assert.match(plain(assistant), /答案/)
+})
+
+test('setTheme 热切主题：未知 id 退回默认，tokens 立即生效', () => {
+  const app = createApp({ theme: createTheme(), registry: createRegistry(), view: createView(),
+    terminal: memoryTerminal(), getState: () => ({}), getSnapshot: () => ({}) })
+  try {
+    assert.equal(app.setTheme('pi'), 'pi')
+    assert.equal(app.getThemeTokens(), PI_TOKENS)
+    assert.equal(app.setTheme('不存在的主题'), 'blue')
+    assert.equal(app.getThemeTokens(), BLUE_TOKENS)
+  } finally { app.dispose() }
+})
+
+test('主题切换后同一行用新配色重画（行缓存被清）', () => {
+  const theme = createTheme(BLUE_TOKENS, { COLORTERM: 'truecolor' })
+  const registry = createRegistry()
+  installDefaultRenderers(registry)
+  const view = createView()
+  view.rows.push({ key: 'u1', role: 'user', text: '问题', done: true, rev: 0 })
+  const chat = new ChatView({ view, theme, registry })
+  const before = chat.render(60).join('\n')
+  theme.setTokens(PI_TOKENS)
+  chat.invalidate()
+  const after = chat.render(60).join('\n')
+  assert.notEqual(before, after, '换主题后重画必须用新 token')
+  assert.match(before, /38;2;192;202;245/, '蓝主题 userMessageText = #c0caf5')
+  assert.match(after, /38;2;255;248;214/, 'pi 主题 userMessageText = cream')
 })
 
 function harness({ prepareError, flushError, active = false, queued = [] } = {}) {
