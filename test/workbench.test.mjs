@@ -157,3 +157,63 @@ test('工作台 /inject 将补充材料送到原生 inject', async () => {
   await workbench.execute('inject', '补充约束')
   assert.deepEqual(calls, [['补充约束', { delivery: 'inject' }]])
 })
+
+test('/resume 读取会话目录期间挂底栏状态，读完立刻撤掉', async () => {
+  const registry = createRegistry()
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const workbench = createWorkbench({
+    app: { notice() {}, requestRender() {}, document: async () => {}, choose: async () => undefined },
+    kernel: { runtime: { sessions: async () => { await gate; return [] } } },
+    view: createView(), registry, runCommand: async () => {}, resumeSession: async () => false,
+  })
+  const running = workbench.execute('resume', '')
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.match(registry.statusTexts().join(' '), /正在读取会话目录/, '等待期间必须给出反馈')
+  release()
+  await running
+  assert.doesNotMatch(registry.statusTexts().join(' '), /正在读取会话目录/, '读完必须撤掉状态')
+})
+
+test('/resume <id> 命中当前会话时给出回执，不静默', async () => {
+  const notices = []
+  const workbench = createWorkbench({
+    app: { notice: (text) => notices.push(text), requestRender() {}, document: async () => {}, choose: async () => undefined },
+    kernel: { runtime: {} }, view: createView(), registry: createRegistry(), runCommand: async () => {},
+    resumeSession: async () => false,
+  })
+  await workbench.execute('resume', 'session-abc')
+  assert.match(notices.join('\n'), /已是当前会话/, '返回 false 时必须说明，否则和失败长得一样')
+})
+
+test('/resume 的会话列表有短 TTL 缓存：连续读取只扫一次目录', async () => {
+  let listCalls = 0
+  let titleCalls = 0
+  const records = [{ persisted: true, live: false, header: { id: 'session-a', cwd: '/w', origin: 'main', createdAt: 1 } }]
+  const ctx = {
+    get: (name) => name === 'sessionQuery' ? {
+      listSessions: async () => { listCalls += 1; return records },
+      readTitleSnapshots: async (ids) => {
+        titleCalls += 1
+        // 真实形状：value.title 是 foldSessionTitle 的**快照对象**（含 title/updatedAt），
+        // 不是字符串——内核用 titleMap.get(id)?.title / ?.updatedAt 读它。
+        return ids.map((sessionId) => ({
+          status: 'fulfilled',
+          sessionId,
+          value: { session: records[0].header, title: { title: '标题', updatedAt: 5 } },
+        }))
+      },
+    } : undefined,
+  }
+  const runtime = createRuntimeAccess(ctx, () => ({ session: { header: { cwd: '/w' } } }))
+  const first = await runtime.sessions()
+  const second = await runtime.sessions()
+  assert.equal(listCalls, 1, '第二次应命中缓存')
+  assert.equal(titleCalls, 1, '标题折叠也不该重复付钱')
+  assert.equal(first[0].title, '标题')
+  assert.equal(first[0].updatedAt, 5, '排序用的 updatedAt 来自标题快照')
+  assert.notEqual(first, second, '每次返回新数组，调用方改不到缓存')
+  await runtime.sessions({ all: true })
+  assert.equal(listCalls, 2, '不同范围是不同缓存键')
+})

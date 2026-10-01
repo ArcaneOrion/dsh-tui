@@ -1,5 +1,12 @@
 # 进度记录
 
+## 第六轮
+
+- 用户报告 `/resume`「有反应，就是有点久」。**先量再改**：tmux 实测选择器出现耗时冷 1065ms / 热 860ms；加 `DSH_TUI_DEBUG_SESSIONS=1` 探针（写临时文件，不污染 TUI）得到分解——`listSessions()` 扫全库 563 个会话 ~250ms，`readTitleSnapshots()` 为 45 个候选逐个加载完整事件日志折叠标题 ~620ms。
+- 顺带查清列表显示裸 session id 的原因：那些会话日志里没有 `session/title` 事件（`foldSessionTitle` 返回 undefined），不是代码 bug；同时确认 `readTitleSnapshots` 的 `value.title` 是**快照对象**（含 title/updatedAt），内核的 `titleMap.get(id)?.title` 读法正确。
+- 修复三处：①读取期间用 `registry.setStatus` 在底栏显示「正在读取会话目录…」，结束即撤（不再有 0.9s 的"死屏"）；②会话列表加 20s 短 TTL 缓存（键含 cwd 与 all），重复打开实测 **66ms**；③消掉静默路径——`resumeSession` 返回 false（例如选了当前会话）时原来什么都不显示，现在回执「已是当前会话，无需恢复」，恢复过程中底栏显示「正在恢复会话…」。
+- 328 项测试通过（+3：状态挂/撤、静默回执、缓存命中与键分离）；check / audit 通过。
+
 ## 第五轮
 
 - 用户报告：输入之后欢迎页（鲸鱼）消失，往上滚也找不回来。**先取证再改**——读 pi-tui 渲染管线：内容**增长**走 append 路径（`"\r\n".repeat(scroll)` → 终端真滚动 → 顶部行进 scrollback）；组件被**原地改写/移除**走 `\x1b[2K` 擦行重写（不进历史）；改动落在视口之上（`firstChanged < prevViewportTop`）才 fullRender。

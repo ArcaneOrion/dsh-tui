@@ -12,6 +12,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { installModelSelection, assembleContextFor } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -549,20 +552,50 @@ export function createRuntimeAccess(ctx, getAgent) {
     if (!current) throw new Error('当前会话已关闭')
     return current
   }
+  /**
+   * /resume 列表的短 TTL 缓存。
+   *
+   * 实测（DSH_TUI_DEBUG_SESSIONS=1）：listSessions 扫全库 ~250ms，
+   * readTitleSnapshots 为每个候选加载完整事件日志折叠标题 ~620ms。连续打开
+   * /resume（改范围、选错再开）不该反复付这笔钱。20s 足够短：期间新建的会话
+   * 本来也不会成为「可恢复的历史会话」。
+   */
+  const sessionsCache = new Map()
+  const SESSIONS_TTL_MS = 20_000
   return {
     async sessions({ all = false, signal } = {}) {
       const current = agent()
       const query = ctx.get('sessionQuery')
       if (typeof query?.listSessions !== 'function') throw new Error('当前运行时没有会话目录服务')
       const cwd = current.session.header?.cwd ?? process.cwd()
-      const records = (await query.listSessions(signal)).filter((record) => record.persisted && !record.live && record.header.origin !== 'subagent'
+      const cacheKey = `${all ? 'all' : 'cwd'}:${cwd}`
+      const cached = sessionsCache.get(cacheKey)
+      if (cached !== undefined && Date.now() - cached.at < SESSIONS_TTL_MS) return [...cached.value]
+      // DSH_TUI_DEBUG_SESSIONS=1 把两个阶段的耗时写进临时文件（不写 stderr，
+      // 免得搅乱 TUI）。/resume 的等待就花在这两步上，排查先看这里。
+      const debug = process.env.DSH_TUI_DEBUG_SESSIONS === '1'
+      const t0 = Date.now()
+      const listed = await query.listSessions(signal)
+      const t1 = Date.now()
+      const records = listed.filter((record) => record.persisted && !record.live && record.header.origin !== 'subagent'
         && (all || record.header.cwd === cwd)).slice(0, 100)
       let titles = []
       if (typeof query.readTitleSnapshots === 'function') titles = await query.readTitleSnapshots(records.map((record) => record.header.id), signal)
+      const t2 = Date.now()
+      if (debug) {
+        try {
+          fs.appendFileSync(path.join(os.tmpdir(), 'dsh-tui-sessions-timing.log'),
+            `${new Date().toISOString()} listSessions=${t1 - t0}ms readTitles=${t2 - t1}ms listed=${listed.length} candidates=${records.length}\n`)
+        } catch {
+          // 诊断写不进去不影响功能。
+        }
+      }
       const titleMap = new Map(titles.filter((row) => row.status === 'fulfilled').map((row) => [row.sessionId, row.value.title]))
-      return records.map(({ header }) => ({ id: String(header.id), cwd: header.cwd, createdAt: header.createdAt,
+      const value = records.map(({ header }) => ({ id: String(header.id), cwd: header.cwd, createdAt: header.createdAt,
         title: titleMap.get(header.id)?.title, updatedAt: titleMap.get(header.id)?.updatedAt ?? header.createdAt }))
         .sort((a, b) => b.updatedAt - a.updatedAt)
+      sessionsCache.set(cacheKey, { at: Date.now(), value })
+      return [...value]
     },
     async validateResume(id) {
       const query = ctx.get('sessionQuery')

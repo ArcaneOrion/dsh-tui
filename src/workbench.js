@@ -30,13 +30,38 @@ export function createWorkbench({ app, kernel, view, registry, runCommand, resum
   let busy = false
   const runtime = kernel.runtime
 
+  /**
+   * 等待期间在底栏挂一条状态，结束后立刻撤掉。
+   *
+   * /resume 的目录扫描 + 标题折叠实测 ~0.9s（DSH_TUI_DEBUG_SESSIONS=1 可复现），
+   * 恢复本身还要再建内核并重放日志。没有这条反馈，按下去像没反应——用户已经
+   * 这么报过一次。状态走 registry（底栏片段），不往对话里插行。
+   */
+  async function withStatus(text, run) {
+    let clear
+    try {
+      clear = registry?.setStatus?.('resume', text)
+    } catch {
+      clear = undefined
+    }
+    try {
+      return await run()
+    } finally {
+      try {
+        clear?.()
+      } catch {
+        // 撤状态失败不能影响命令本身。
+      }
+    }
+  }
+
   async function resume(rest) {
     if (!resumeSession) return app.document({ title: '恢复会话', text: '请在 dsh tui 中使用 /resume 恢复真实会话。' })
     let id = rest?.trim()
     if (!id) {
       let all = false
       for (;;) {
-        const sessions = await runtime.sessions({ all })
+        const sessions = await withStatus('正在读取会话目录…', () => runtime.sessions({ all }))
         const selected = await app.choose({ title: '恢复会话',
           detail: `${all ? '所有工作区' : '当前工作区'} · 最近 ${sessions.length} 个可恢复会话 · 输入搜索`,
           options: [
@@ -51,7 +76,11 @@ export function createWorkbench({ app, kernel, view, registry, runCommand, resum
         break
       }
     }
-    if (await resumeSession(id)) app.notice(`已恢复会话 · ${id.replace(/^session-/, '').slice(0, 8)}`)
+    // 成功与「已经是当前会话」都要说出来：静默返回在界面上和失败长得一样。
+    const switched = await withStatus('正在恢复会话…', () => resumeSession(id))
+    app.notice(switched === false
+      ? '已是当前会话，无需恢复'
+      : `已恢复会话 · ${id.replace(/^session-/, '').slice(0, 8)}`)
   }
 
   async function context() {
