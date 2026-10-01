@@ -125,10 +125,8 @@ export const BLUE_TOKENS = Object.freeze({
   thinkLabel: '#e0af68',
 
   // 输入框
-  editorBorder: '#2a3a52',
+  editorBorder: '#6b9bd8',
   editorBorderActive: '#7aa2f7',
-  /** 输入栏整块底色：编辑区读作「一块可输入的色块」，与状态行色块呼应。 */
-  editorBg: '#223049',
   welcomeBorder: '#7aa2f7',
 
   // markdown 语义 token（每主题自定义，映射不写死色相）
@@ -205,9 +203,8 @@ export const PI_TOKENS = Object.freeze({
   thinkLabel: '#ffb454',
 
   // 输入框
-  editorBorder: '#3a5d78',
+  editorBorder: '#6b9bd8',
   editorBorderActive: '#35d8ff',
-  editorBg: '#2a4358',
   welcomeBorder: '#ffb454',
 
   // markdown 语义 token

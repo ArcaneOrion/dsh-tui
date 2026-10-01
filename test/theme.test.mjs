@@ -52,7 +52,7 @@ test('setTokens 热切：同一个 theme 引用立刻用新配色（含 markdown
 
   // markdown/editor 是闭包引用同一组 fg —— 也必须跟着换。
   assert.match(theme.markdown.link('L'), /38;2;53;216;255/, 'pi link = cyan')
-  assert.match(theme.editor.borderColor('B'), /38;2;58;93;120/, 'pi editorBorder = panel2')
+  assert.match(theme.editor.borderColor('B'), /38;2;107;155;216/, 'pi editorBorder = #6b9bd8（比通用 border 更实）')
 
   theme.setTokens(BLUE_TOKENS)
   assert.match(theme.markdown.link('L'), /38;2;122;162;247/, '切回蓝主题 link 应变蓝')

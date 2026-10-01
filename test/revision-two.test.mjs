@@ -204,7 +204,7 @@ test('Shift+Tab 触发权限循环（Claude Code 同款手感）', () => {
   } finally { app.dispose() }
 })
 
-test('输入栏是一整块底色：含边框行、铺满整行', () => {
+test('输入栏：只有线条、没有底色块，边框用 editorBorder 且铺满整行', () => {
   const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal: memoryTerminal(60, 20),
     getState: () => ({}), getSnapshot: () => ({}) })
   try {
@@ -212,8 +212,15 @@ test('输入栏是一整块底色：含边框行、铺满整行', () => {
     const lines = app.editor.render(60)
     assert.ok(lines.length >= 3, '上下边框 + 内容')
     for (const line of lines) {
-      assert.match(line, /\x1b\[48;/, '每一行（含边框）都要有底色')
-      assert.equal(visibleWidth(line), 60, '色块必须铺满整行')
+      assert.doesNotMatch(line, /\x1b\[48;/, '输入栏不该有底色块')
+      assert.equal(visibleWidth(line), 60, '每行都不越界')
     }
+    const borders = lines.filter((line) => /^─+$/.test(line.replace(/\x1b\[[0-9;]*m/g, '')))
+    assert.equal(borders.length, 2, '上下两道线条')
+    for (const border of borders) {
+      // #4a6f9e = rgb(74,111,158)：比通用 border 更实，深色终端上看得见。
+      assert.match(border, /\x1b\[38;2;107;155;216m/, '线条用 editorBorder（#6b9bd8）')
+    }
+    assert.match(lines.join('\n'), /中文草稿/, '草稿仍在输入栏里')
   } finally { app.dispose() }
 })
