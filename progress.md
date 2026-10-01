@@ -1,5 +1,14 @@
 # 进度记录
 
+## 第五轮
+
+- 用户报告：输入之后欢迎页（鲸鱼）消失，往上滚也找不回来。**先取证再改**——读 pi-tui 渲染管线：内容**增长**走 append 路径（`"\r\n".repeat(scroll)` → 终端真滚动 → 顶部行进 scrollback）；组件被**原地改写/移除**走 `\x1b[2K` 擦行重写（不进历史）；改动落在视口之上（`firstChanged < prevViewportTop`）才 fullRender。
+- 用 tmux（`nix shell nixpkgs#tmux`）+ `capture-pane -S -` 复现：折叠前历史缓冲鲸鱼 1 行，推入一条 notice 行触发折叠后 **0 行**——被原地擦除，从未进 scrollback。（我此前口头说的「往上滚还在」是错的，已纠正。）
+- 根因：欢迎页放在 header 槽，且 `hasConversation()` 一为真就折叠成两行——12 行 → 3 行的「行数变少 + 首行改动」正好命中擦除/差分重写路径。
+- 修复：欢迎页改成**流内容**——`banner.js` 抽出纯函数 `renderWelcomeBox()` 与 `welcomeRow()`（动态字段一次性快照，滚进历史后不再变，避免 fullRender）；`index.js` 注册 `welcome` 行渲染器，只在全新空会话把这一行放进 `view.rows[0]`，不再 `setHeader`。`createBanner` 保留为 header 适配器（演示脚本与第三方用）。
+- 验证（tmux，全程无模型请求）：推入一行后鲸鱼 1→1（不再被擦）；内容涨到 66 行时可见屏 0 命中、`-S -` 历史 1 命中——鲸鱼完整躺在 scrollback 里。
+- 325 项测试通过（+1：欢迎页是快照式流内容行）；check / audit 通过。
+
 ## 第四轮
 
 - 用户反馈：配色还是蓝色为主，或提供 `/theme` 选择。两者都做：**默认改回蓝色（Tokyo Night 风味，深蓝底 + 蓝 accent）**，并加 `/theme` 多主题热切换。

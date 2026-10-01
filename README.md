@@ -1,6 +1,6 @@
 # DSH TUI
 
-基于 DSH 原生内核与 `@earendil-works/pi-tui` 的终端工作台。第二版结合原来的鲸鱼标识与 Claude Code 的终端交互：蓝色强调、暖色欢迎框、清楚的角色标记与简洁输入区。上下文与工具全文按需查看。
+基于 DSH 原生内核与 `@earendil-works/pi-tui` 的终端工作台。第二版结合原来的鲸鱼标识与 Claude Code 的终端交互：蓝色强调、暖色欢迎框、清楚的角色标记与简洁输入区。上下文与工具全文按需查看。欢迎页是**对话流的第一行内容**（不是常驻表头），会随对话增长自然滚入终端 scrollback，往上滚随时能看到。
 
 [第二版设计说明](docs/DESIGN-V2.md) · [最新前后对照](docs/benchmark-v2/index.html) · [第一版归档](docs/benchmark-v1/index.html)
 

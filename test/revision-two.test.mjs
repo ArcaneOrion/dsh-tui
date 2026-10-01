@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { createApp, ChatView } from '../src/app.js'
-import { createBanner } from '../src/banner.js'
+import { renderWelcomeBox, welcomeRow } from '../src/banner.js'
 import { createTheme, BLUE_TOKENS, PI_TOKENS } from '../src/theme.js'
 import { createRegistry } from '../src/registry.js'
 import { createView } from '../src/projection.js'
@@ -36,13 +36,13 @@ test('Ctrl+T 按下切换、长按和松开保持，再按一次才折叠', asyn
 })
 
 test('欢迎页包含鲸鱼和恢复入口，输入区无边框外装饰且保留 IME 标记', () => {
-  const banner = createBanner({ theme, getSubtitle: () => 'deepseek-flash', getWorkspace: () => '/project' })
+  const welcome = (width) => renderWelcomeBox({ width, theme, subtitle: 'deepseek-flash', workspace: '/project' })
   for (const width of [24, 32, 48, 80, 120]) {
-    const lines = banner.render(width)
+    const lines = welcome(width)
     assert.ok(lines.every((line) => visibleWidth(line) <= width))
     if (width >= 48) assert.match(lines.join('\n'), /\/resume/)
   }
-  assert.match(banner.render(80).join('\n'), /▄▄███▄▄/)
+  assert.match(welcome(80).join('\n'), /▄▄███▄▄/)
   const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal: memoryTerminal(), getState: () => ({}), getSnapshot: () => ({}) })
   try {
     app.editor.setText('中文草稿')
@@ -54,6 +54,27 @@ test('欢迎页包含鲸鱼和恢复入口，输入区无边框外装饰且保�
     assert.match(lines.join('\n'), /\x1b_pi:c\x07/)
     assert.doesNotMatch(lines.join('\n'), /写下你要做的事|继续输入/)
   } finally { app.dispose() }
+})
+
+test('欢迎页是一行流内容（快照字段），不再是会被原地改写的活表头', () => {
+  const row = welcomeRow({ version: '0.1.0', model: 'roundrobin/round-freeday', cwd: '/project', preset: 'standard' })
+  assert.equal(row.role, 'welcome')
+  assert.equal(row.key, 'welcome')
+  assert.equal(row.done, true)
+  assert.equal(row.subtitle, 'dsh-tui 0.1.0 · roundrobin/round-freeday')
+  assert.equal(row.workspace, '/project')
+  assert.equal(row.preset, 'standard')
+  // 没有模型时的措辞
+  assert.equal(welcomeRow({ version: '0.1.0' }).subtitle, 'dsh-tui 0.1.0 · default model')
+  // 这一行必须能安全滚进历史：字段是快照（不含函数/响应式 getter）。
+  for (const [key, value] of Object.entries(row)) {
+    assert.ok(['string', 'boolean', 'number'].includes(typeof value) || value === undefined, `${key} 必须是快照值`)
+  }
+  // 渲染按行数输出，且任何宽度都不溢出。
+  for (const width of [20, 40, 60, 120]) {
+    const lines = renderWelcomeBox({ width, theme, subtitle: row.subtitle, workspace: row.workspace, preset: row.preset })
+    assert.ok(lines.every((line) => visibleWidth(line) <= width))
+  }
 })
 
 test('用户与助手靠图层区分：用户是纯底色块，助手无底色且零角色标签', () => {

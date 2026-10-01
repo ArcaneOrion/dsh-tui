@@ -16,7 +16,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import { createApp } from './app.js'
-import { createBanner } from './banner.js'
+import { renderWelcomeBox, welcomeRow } from './banner.js'
 import { createCommandAutocomplete, createCommandSystem, helpText, parseCommandLine } from './commands.js'
 import { installConsoleGuard } from './console-guard.js'
 import { createFooterInfo } from './footer.js'
@@ -94,6 +94,8 @@ export async function apply(ctx) {
   let app
   let workbench
   let sessionSwitcher
+  /** welcome 行渲染器的卸载函数（注册得比 teardown 晚，用 let 避开 TDZ）。 */
+  let disposeWelcomeRenderer
 
   // ── 内核桥 ────────────────────────────────────────────────────────────
 
@@ -200,6 +202,11 @@ export async function apply(ctx) {
       // 同上。
     }
     disposeDefaultRenderers()
+    try {
+      disposeWelcomeRenderer?.()
+    } catch {
+      // 卸载渲染器失败不影响退出。
+    }
   }
 
   async function shutdown(code = 0) {
@@ -623,16 +630,39 @@ export async function apply(ctx) {
   // Model metadata is cached by route; a switch invalidates the old capacity.
   void footerInfo.warmUp()
 
-  // 顶部 banner 走注册表（可被 setHeader 整体换掉），配色取自本 TUI 的主题。
-  registry.setHeader(
-    createBanner({
-      theme,
-      getSubtitle: () => `dsh-tui ${pkg.version} · ${modelLabel === '' ? 'default model' : modelLabel}`,
-      getWorkspace: () => kernel.agent.session.header?.cwd ?? process.cwd(),
-      getPreset: () => presetLabel,
-      hasConversation: () => view.rows.length > 0,
-    }),
-  )
+  // 欢迎页是**流内容**（view.rows 的第一行），不是活表头。
+  //
+  // 为什么必须这样：pi-tui 只在内容**增长**时走 append 路径（发真实换行 →
+  // 终端滚动 → 顶部的行进 scrollback，永久保留）；组件被原地改写/移除时走的是
+  // `\x1b[2K` 擦行重写，那一屏内容不进历史。早期把欢迎页放在 header 槽、有对话
+  // 就折叠成两行，实测（tmux 历史缓冲）鲸鱼从 1 行变 0 行——被原地擦掉，往上滚
+  // 找不到。现在它作为一行普通对话内容，随对话增长自然滚入 scrollback。
+  //
+  // 只在**全新的空会话**里插入：--resume 进来的会话有历史，不该再出现欢迎页；
+  // 会中 /resume 会整体换掉 view（Object.assign），这一行也随之消失。
+  const disposeWelcomeRendererRegistration = registry.setMessageRenderer('welcome', ({ row, theme }) => ({
+    invalidate() {},
+    render(width) {
+      return renderWelcomeBox({
+        width,
+        theme,
+        subtitle: row.subtitle ?? '',
+        workspace: row.workspace ?? '',
+        preset: row.preset ?? '',
+      })
+    },
+  }))
+  disposeWelcomeRenderer = disposeWelcomeRendererRegistration
+  if (startup.resume === undefined && view.rows.length === 0) {
+    let cwd = process.cwd()
+    try {
+      cwd = kernel.agent.session.header?.cwd ?? cwd
+    } catch {
+      // 会话头还没就绪就用进程 cwd；欢迎页是快照，不重试。
+    }
+    view.rows.push(welcomeRow({ version: pkg.version, model: modelLabel, cwd, preset: presetLabel }))
+    view.revision += 1
+  }
 
   try {
     logTerminalState('before-start')
