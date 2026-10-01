@@ -5,9 +5,9 @@
 - 用户反馈开机时终端上方会留两行插件日志（`[model-channel-manager] booted …`、`[tavily-web] registered …`），不好看；并问能否像 pi 一样在 TUI 里显示加载内容。
 - 求证：两行都是 **`console.log`**，来自用户自己的两个插件（model-channel-manager / tavily-web），且发生在 **dsh-tui 挂载之前**——那时 console 防护还没装上，所以直落终端；console 防护只覆盖安装之后的调用。
 - 另一个发现：pi 式开机面板（`startup-info.js` 的 `collectStartupSections`：`[Context]/[Skills]/[Commands]/[Plugins]/[Theme]`）**代码与测试都在，却从没在 index.js 里接上**——用户看不到「加载了什么」正是这个原因。
-- 改动：①`app.start()` 先 `terminal.clearScreen()` 再接管（pi-tui 首帧本就假定屏幕干净），开机日志不再露在界面上方；②把开机面板接上，在全新会话里紧随欢迎页写一行 `role: info`（失败则整块不出现）。
-- 验证（真机 tmux）：可见屏插件开机日志 0 处；**但  历史里仍有 2 行**——只清屏（2J）时它们退到 scrollback，往上滚照样看得见（我上一轮只查可见屏，误判成「已清掉」）。改为 （2J 清屏 + 3J 清 scrollback + H 回原点）后，可见屏与历史双双 0 行。代价：TUI 启动时也会抹掉终端里更早的输出（shell 提示符等），用户若要保留可退回只清屏。
-- 验证（真机 tmux）：面板分节 `[Context]/[Commands]/[Plugins]/[Theme]` 出现，`[Plugins]` 列出本次实际加载的行（含 model-channel-manager、tavily-web、四个 preset、cordis 宿主行等）。337 测试通过（+1：start() 必须先清屏）。
+- 改动：①`app.start()` 先清屏再接管（pi-tui 首帧本就假定屏幕干净）；②把开机面板接上，在全新会话里紧随欢迎页写一行 `role: info`（失败则整块不出现）。
+- 验证（真机 tmux）：只发 `2J` 时可见屏 0 处日志，但 `capture-pane -S -`（历史+屏）里仍有 2 行——它们退到 scrollback，往上滚照样看得见（上一轮只查可见屏，误判成「已清掉」）。改为 `\x1b[2J\x1b[3J\x1b[H`（清屏 + 清 scrollback + 回原点）后，可见屏与历史双双 0 行。代价：启动时也会抹掉终端里更早的输出（shell 提示符等），要保留可退回只清屏。
+- 验证（真机 tmux）：面板分节 `[Context]/[Commands]/[Plugins]/[Theme]` 出现，`[Plugins]` 列出本次实际加载的行（含 model-channel-manager、tavily-web、四个 preset、cordis 宿主行等）。337 测试通过（+1：start() 必须先清屏，断言 2J+3J+H）。
 - 遗留选项（已告知用户）：想让那两行**显示在 TUI 里**而不是隐藏，需要 console 防护更早安装——即把 `@arcaneorion/dsh-tui` 挪到 bundles 列表更前面，或让这两个插件改用带开关的日志。
 
 ## 第九轮（意图纠偏）
