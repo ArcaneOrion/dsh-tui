@@ -34,8 +34,8 @@ test('bg 用背景色序列', () => {
   assert.match(theme.bg('toolPendingBg', 'X'), /^\x1b\[48;2;31;35;53mX\x1b\[0m$/)
 })
 
-test('text token 为空串时不加任何转义（跟随终端默认前景）', () => {
-  const theme = createTheme(DARK_TOKENS, TRUE)
+test('token 值为空串时不加任何转义（跟随终端默认前景）', () => {
+  const theme = createTheme({ ...DARK_TOKENS, text: '' }, TRUE)
   assert.equal(theme.fg('text', 'plain'), 'plain')
 })
 

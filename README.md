@@ -47,7 +47,8 @@ npm run demo
 | `/agents` | 当前会话子 Agent 的持久目录与驻留状态快照 |
 | `/model` | 渠道 → 模型 → 推理强度选择 |
 | `/model provider/model` | 校验后写入会话事件，下一步生效 |
-| `/preset` | standard / ptc / minimal / cordis；仅内核认可的空白会话可切换 |
+| `/preset` | standard / ptc / minimal / cordis；仅内核认可的空白会话可切换。`/preset create` 进入创造模式（切到 cordis 预设，由 Agent 起草并安装声明预设的 bundle） |
+| `/pane` | 文件编辑右栏：`/pane`（auto→on→off 轮换）或 `/pane auto\|on\|off`。Edit/Write 运行时右侧出现 diff，回合结束保留最后状态；窄终端（<96 列）自动收起 |
 | `/help` | TUI 与原生命令，包括已启用的压缩、计划、目标等功能 |
 | `/doctor` | 真实服务接入诊断 |
 

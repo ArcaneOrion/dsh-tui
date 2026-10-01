@@ -101,3 +101,13 @@
     # 要求 Host 装配这个设置行（官方 web patch 同样持有它）。
     - id: subagent-model-selection-settings
       name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+
+    # cordis 预设的宿主侧依赖。tool-cordis 注入 cordisInspect 服务；检查
+    # 提供者是进程级全局（registry 拒绝重复 id），在宿主层注册一次，每个
+    # 预设的 tool-cordis 行都读这里——与官方 web 表面同构。本 bundle 自带
+    # cordis 预设，故一并提供它依赖的宿主服务。
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+
+    - id: cordis-inspect-providers
+      name: '@deepseek-ai/dsh-tool-cordis/host'

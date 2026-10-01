@@ -106,7 +106,7 @@ test('调用卡：terminal 显示命令、cwd 与描述', () => {
   assert.match(out, /列目录/)
 })
 
-test('调用卡：diff 显示文件名与增删行', () => {
+test('调用卡：diff 显示标题与增删摘要，不复述全文（全文在右侧编辑栏）', () => {
   const out = plain(
     renderCallView(
       { card: 'diff', title: 'Write foo.ts', diffs: [{ path: 'foo.ts', oldText: 'a', newText: 'b' }] },
@@ -115,8 +115,10 @@ test('调用卡：diff 显示文件名与增删行', () => {
   )
   assert.match(out, /Write foo\.ts/)
   assert.match(out, /foo\.ts/)
-  assert.match(out, /-\s*a/)
-  assert.match(out, /\+\s*b/)
+  assert.match(out, /\+1/)
+  assert.match(out, /−1/)
+  assert.doesNotMatch(out, /\+\s*b/)
+  assert.doesNotMatch(out, /-\s*a/)
 })
 
 test('调用卡：generic 用 kind 选图标，未知 kind 退回默认图标', () => {
@@ -226,14 +228,17 @@ test('ToolCard：没有展示意图时退回「工具名 + 状态」的朴素头
   assert.match(out, /输出/)
 })
 
-test('ToolCard：有展示意图时用卡片头，且状态并列显示', () => {
+test('ToolCard：有展示意图时用卡片头，状态由底色层承担（无状态文字）', () => {
   const card = new ToolCard({
     row: { toolName: 'x', done: false, callView: { card: 'terminal', title: 'ls' }, text: '' },
     theme,
   })
-  const out = plain(card.render(80))
+  const rendered = card.render(80)
+  const out = plain(rendered)
   assert.match(out, /ls/)
-  assert.match(out, /运行中/)
+  // 运行中 = toolPendingBg 的底色块；不再有「运行中…」文字行。
+  assert.match(rendered.join('\n'), /\x1b\[48;/)
+  assert.doesNotMatch(out, /运行中|完成|失败/)
 })
 
 test('ToolCard：任何宽度下都不溢出', () => {

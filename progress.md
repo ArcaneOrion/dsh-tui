@@ -1,5 +1,15 @@
 # 进度记录
 
+## 第三轮
+
+- 用户反馈：去掉「❯ 你」这类文字角色标签（幼稚），用户输入 / 思考 / 工具调用改用**图层**区分；视觉对齐本机 pi（输入框、布局、配色），参考 `@earendil-works/pi-coding-agent` dist 与用户调的 `~/.pi/agent/themes/pi-theme.json`；文件编辑参考 Claude Code 在右侧划区域显示 diff。
+- 色板逐值取自 pi-theme.json（墨蓝底 + 暖黄 accent + cyan/cream）。用户消息 = 纯 `userMessageBg` 底色块、零标签（pi `UserMessageComponent`）；助手正文无底色无 `● DeepSeek` 行；思考 = thinkingText 斜体块；工具卡 = pi `ToolExecutionComponent` 三态底色块（pending/success/error），不再有「运行中/完成」文字。输入框去掉 `❯` 提示符，回归 pi-tui Editor 原生单线框。
+- 文件编辑右栏（`src/edit-pane.js`）：用 pi-tui 的 **nonCapturing overlay** 实现——只合成活视口，scrollback 保持干净（与 Claude Code 一致）；左列窄化渲染、右栏按 36% 宽度合成、`<96` 列自动收起。窗口聚焦最后一次改动的行。`/pane auto|on|off` 控制；Edit/Write 运行时出现、回合结束保留最后状态。左栏工具卡不再复述 diff 全文，只给 `+N −M` 摘要。
+- preset 创造模式：对齐 Web 表面——`/preset` 选择器在 roster 带 cordis 时提供「✦ 创造模式」入口，`/preset create` 切空白会话到 cordis 预设并预填引导输入（Agent 在 cordis 预设里自带 tool-cordis + plugin-manager，起草 bundle 后安装）。
+- **修了一个潜伏 bug**：tui profile 的 cordis 预设一直 broken（`tool-cordis: waiting for cordisInspect`）——dsh-tui bundle 带了 cordis 预设却没带它依赖的宿主服务。主 patch 补两行 `cordis-host-runner` + `cordis-inspect-providers`（与官方 web 表面同构），cordis 预设与创造模式才真正可用。
+- tavily-web：用户指出 TUI 没法用 tavily（只在 web profile 装过）。`dsh plugin --profile tui add @arcaneorion/dsh-tavily-web` 装进 tui profile；实机 `/tools` 显示 26→27 个工具、`[tavily-web] registered tavily_search / web_fetch (key pool: 8 ref(s))`。
+- 316 项测试通过（原 304 + 右栏 12）；check / audit 通过。真实 PTY 验证：`❯ 你`/`● DeepSeek` 已消失、tavily_search 已注册、`/preset cordis` 切换成功、`/pane on` 右栏渲染、双 Ctrl+C 干净退出。本轮无模型计费请求。
+
 ## 第二轮
 
 - 第一版已提交 f8ce820。

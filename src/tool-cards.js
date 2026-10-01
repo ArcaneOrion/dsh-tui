@@ -11,8 +11,7 @@
  * 认不出的卡片类型一律退回原文渲染——**宁可朴素，不可编造**。
  */
 
-import { Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
-import { rail } from './layout.js'
+import { Box, Container, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 /** 卡片类型的图标。认不出的用 · 。 */
 const KIND_ICON = {
@@ -118,6 +117,30 @@ export function renderDiffs(diffs, theme, { maxLinesPerFile = 40, maxTotalLines 
   return out
 }
 
+/**
+ * 把一组文件 diff 压成每文件一行摘要：`path +N −M`。
+ *
+ * 左栏的对话区只显示「过程」，文件编辑的全文在右侧编辑栏（src/edit-pane.js）
+ * 展示；这里不复述 diff，只给一眼可读的规模。
+ */
+export function summarizeDiffs(diffs, theme) {
+  const out = []
+  for (const file of diffs) {
+    let add = 0
+    let remove = 0
+    let summarized = false
+    for (const row of lineDiff(file?.oldText ?? null, file?.newText ?? '')) {
+      if (row.kind === 'add') add += 1
+      else if (row.kind === 'remove') remove += 1
+      else if (row.kind === 'summary') summarized = true
+    }
+    const path = typeof file?.path === 'string' && file.path !== '' ? file.path : '(未命名)'
+    const counts = summarized ? '' : ` ${theme.fg('diffAdded', `+${add}`)} ${theme.fg('diffRemoved', `−${remove}`)}`
+    out.push(theme.fg('muted', '  ' + path) + counts)
+  }
+  return out
+}
+
 /** 把 content 块数组抽成纯文本（只取文本块）。 */
 function contentText(content) {
   if (!Array.isArray(content)) return ''
@@ -146,7 +169,7 @@ export function renderCallView(view, theme) {
 
   if (view.card === 'diff') {
     out.push(theme.fg('toolTitle', `✎ ${view.title ?? 'edit'}`))
-    if (Array.isArray(view.diffs)) out.push(...renderDiffs(view.diffs, theme))
+    if (Array.isArray(view.diffs)) out.push(...summarizeDiffs(view.diffs, theme))
     return out
   }
 
@@ -174,7 +197,7 @@ export function renderResultView(view, fallbackText, theme, options = {}) {
 
   if (view !== null && view !== undefined && typeof view === 'object') {
     if (view.card === 'diff' && Array.isArray(view.diffs)) {
-      out.push(...renderDiffs(view.diffs, theme))
+      out.push(...summarizeDiffs(view.diffs, theme))
       return out
     }
 
@@ -289,21 +312,24 @@ export class ToolCard extends Container {
   }
 
   build(row, theme) {
-    const status =
+    // pi 的 ToolExecutionComponent：一整块底色随状态变的框——运行中
+    // toolPendingBg、失败 toolErrorBg、成功 toolSuccessBg。底色本身就是状态
+    // 信号，不再有「运行中…/完成」这样的文字行。
+    const bgToken =
       row.done !== true
-        ? theme.fg('dim', '运行中…')
+        ? 'toolPendingBg'
         : row.isError === true
-          ? theme.fg('error', '失败')
-          : theme.fg('success', '完成')
-
-    const box = new Container()
+          ? 'toolErrorBg'
+          : 'toolSuccessBg'
+    const box = new Box(1, 1, (text) => theme.bg(bgToken, text))
 
     const callLines = renderCallView(row.callView, theme)
     if (callLines.length === 0) {
-      // 没有展示意图（工具没声明 presentCall，或 args 还不是合法 JSON）
-      box.addChild(new Text(theme.fg('toolTitle', `▸ ${row.toolName ?? 'tool'}`) + '  ' + status, 0, 0))
+      // 没有展示意图（工具没声明 presentCall，或 args 还不是合法 JSON）。
+      // pi 的兜底：粗体工具名。
+      box.addChild(new Text(theme.bold(theme.fg('toolTitle', row.toolName ?? 'tool')), 0, 0))
     } else {
-      box.addChild(new Text(callLines[0] + '  ' + status, 0, 0))
+      box.addChild(new Text(callLines[0], 0, 0))
       for (const line of callLines.slice(1, 5)) box.addChild(new Text(line, 0, 0))
     }
 
@@ -322,7 +348,7 @@ export class ToolCard extends Container {
       box.addChild(new Text(theme.fg('error', '  ' + row.errorReason), 0, 0))
     }
 
-    this.addChild(rail(box, theme, { tone: row.isError ? 'error' : row.done ? 'border' : 'accent' }))
+    this.addChild(box)
   }
 }
 

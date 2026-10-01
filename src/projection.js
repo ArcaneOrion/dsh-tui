@@ -77,6 +77,13 @@ export function createView() {
     lastTurnReason: undefined,
     /** callId → 已插入的工具行，用于把 tool/result 配回 tool/call。 */
     tools: new Map(),
+    /**
+     * 文件编辑右栏的状态：最近一次 Edit/Write 类调用的 diff 与运行状态。
+     * null = 尚无编辑。形状：{ rev, callId, title, diffs, status }，
+     * status ∈ 'running' | 'done' | 'error'。rev 每次变化自增，
+     * 是右栏组件（src/edit-pane.js）的缓存键。
+     */
+    editPane: null,
     contextRevision: 0,
     step: undefined,
     turn: undefined,
@@ -231,6 +238,19 @@ export function applySessionEvent(view, event, present = undefined) {
         startedAt: event.time,
       })
       if (typeof data?.callId === 'string') view.tools.set(data.callId, row)
+      // 文件编辑右栏：工具声明了 diff 展示意图时，把这次的 diff 记为右栏的
+      // 最新内容（识别依据是展示意图，不是工具名——新工具装上就自动生效）。
+      if (callView !== null && typeof callView === 'object' && callView.card === 'diff'
+        && Array.isArray(callView.diffs) && callView.diffs.length > 0) {
+        const prev = view.editPane
+        view.editPane = {
+          rev: (prev?.rev ?? 0) + 1,
+          callId: typeof data?.callId === 'string' ? data.callId : null,
+          title: typeof callView.title === 'string' && callView.title !== '' ? callView.title : undefined,
+          diffs: callView.diffs,
+          status: 'running',
+        }
+      }
       return true
     }
 
@@ -257,6 +277,15 @@ export function applySessionEvent(view, event, present = undefined) {
         row.finishedAt = event.time
         row.resultView = resolveResultView(row.toolName, row.args)
         row.rev = (row.rev ?? 0) + 1
+        // 右栏只认领自己那次调用的结果；其他工具的结果不动它。
+        if (view.editPane !== null && view.editPane.callId === callId) {
+          view.editPane.rev = (view.editPane.rev ?? 0) + 1
+          view.editPane.status = isError ? 'error' : 'done'
+          if (row.resultView?.card === 'diff' && Array.isArray(row.resultView.diffs)
+            && row.resultView.diffs.length > 0) {
+            view.editPane.diffs = row.resultView.diffs
+          }
+        }
         touch(view)
         return true
       }

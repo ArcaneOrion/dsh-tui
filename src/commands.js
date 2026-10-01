@@ -18,7 +18,7 @@ import { MessageRole } from './registry.js'
 export const LOCAL_COMMANDS = Object.freeze([
   { name: 'help', description: '列出所有可用命令' },
   { name: 'model', description: '查看或选择渠道与模型（/model）' },
-  { name: 'preset', description: '查看或选择会话预设（/preset）' },
+  { name: 'preset', description: '查看或选择会话预设（/preset · /preset create 创造模式）' },
   { name: 'doctor', description: '自检：哪些内核服务接上了、哪些没有' },
   { name: 'workbench', description: '打开工作台 · Ctrl+K' },
   { name: 'resume', description: '恢复历史会话（/resume 或 /resume <id>）' },
@@ -30,6 +30,7 @@ export const LOCAL_COMMANDS = Object.freeze([
   { name: 'inspect', description: '查看工具调用与结果全文 · Ctrl+O' },
   { name: 'agents', description: '查看当前会话的子 Agent' },
   { name: 'thinking', description: '展开或折叠思考全文 · Ctrl+T' },
+  { name: 'pane', description: '文件编辑右栏：/pane auto|on|off' },
   { name: 'exit', description: '退出' },
   { name: 'quit', description: '退出（同 /exit）' },
 ])

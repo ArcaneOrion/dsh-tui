@@ -15,8 +15,11 @@ export class WorkbenchEditor extends Editor {
     return lines.map((line, index) => {
       // Editor rows have padding; border rows begin with a rule. Preserve its
       // scroll markers and cursor/IME escape sequences exactly.
+      //
+      // pi 的输入框就是 pi-tui Editor 的原生框体：上下两道单线边框、
+      // 内容行自带内边距——没有提示符，没有装饰。
       if (index === 0 || plainText(line).startsWith('─')) return theme.fg('border', fit('──' + plainText(line), width))
-      return fit((index === 1 ? theme.fg('accent', '❯ ') : '  ') + line, width)
+      return fit('  ' + line, width)
     })
   }
 }

@@ -26,11 +26,27 @@ import { logKey, logTerminalState } from './keylog.js'
 import { createPrompter } from './prompts.js'
 import { WidgetPlacement } from './registry.js'
 import { WorkbenchEditor } from './composer.js'
+import { EditPane } from './edit-pane.js'
 import { fit } from './layout.js'
 
 /** 默认的工作动画帧。 */
 const DEFAULT_WORKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const DEFAULT_WORKING_INTERVAL = 100
+
+// ── 文件编辑右栏的布局常量 ────────────────────────────────────────────────
+//
+// 宽度以百分比字符串注册进 overlay（"36%"），resize 时 pi-tui 按当前列数重新
+// 解析。paneWidthOf 必须与 pi-tui parseSizeValue 的取整逐位一致
+// （Math.floor(width * 36 / 100)），否则左列与右栏之间会错位。
+
+/** 终端窄于这个列数时不分栏：编辑区太窄比没有右栏更伤。 */
+const MIN_SPLIT_COLUMNS = 96
+/** 右栏占终端宽度的百分比。 */
+const PANE_WIDTH_PERCENT = 36
+
+function paneWidthOf(width) {
+  return Math.floor((width * PANE_WIDTH_PERCENT) / 100)
+}
 
 /**
  * 对话区组件：把视图模型（行）渲染成终端行。
@@ -199,6 +215,35 @@ export function createApp(options) {
   // 审批与提问用的模态弹窗。内核会停下来等它们的回答。
   const prompter = createPrompter({ tui, theme })
 
+  // ── 文件编辑右栏 ──────────────────────────────────────────────────────
+  //
+  // mode: 'auto' = 有编辑时出现（默认，Claude Code 行为：编辑时出现、回合
+  // 结束保留最后状态）；'on' = 常驻；'off' = 关闭。/pane 命令切换。
+  const pane = { mode: 'auto' }
+  const paneActive = (width) => {
+    if (pane.mode === 'off' || width < MIN_SPLIT_COLUMNS) return false
+    if (pane.mode === 'on') return true
+    return view.editPane !== null && view.editPane !== undefined
+  }
+  const editPane = new EditPane({ view, theme, getHeight: () => terminal.rows })
+  const editPaneHandle = tui.showOverlay(editPane, {
+    nonCapturing: true,
+    anchor: 'top-right',
+    width: `${PANE_WIDTH_PERCENT}%`,
+    visible: (columns) => paneActive(columns),
+  })
+
+  // 「有没有模态弹窗」与「有没有 overlay」在右栏存在后不再等价：右栏是
+  // nonCapturing overlay，不抢焦点也不吃按键。判据只数捕获型 overlay；
+  // 读取 pi-tui 内部栈失败时退回保守的 hasOverlay()。
+  const hasModalOverlay = () => {
+    try {
+      return tui.overlayStack.some((entry) => entry.options?.nonCapturing !== true && tui.isOverlayVisible(entry))
+    } catch {
+      return tui.hasOverlay()
+    }
+  }
+
   const root = new Container()
   const headerSlot = new Container()
   const chat = new ChatView({ view, theme, registry })
@@ -262,9 +307,10 @@ export function createApp(options) {
     editorSlot.clear()
     editor = buildEditor()
     editorSlot.addChild(editor)
-    // 焦点跟着新编辑器走；但**有弹窗时不能抢**，否则模态框会失灵。
+    // 焦点跟着新编辑器走；但**有模态弹窗时不能抢**，否则模态框会失灵。
+    // （右栏是 nonCapturing overlay，不算模态。）
     try {
-      if (tui.hasOverlay?.() !== true) tui.setFocus(editor)
+      if (hasModalOverlay() !== true) tui.setFocus(editor)
     } catch {
       // start() 之前 setFocus 可能不可用；start 之后会再设一次。
     }
@@ -387,7 +433,19 @@ export function createApp(options) {
   root.addChild(belowWidgets)
   root.addChild(footerSlot)
 
-  tui.addChild(root)
+  // 右栏可见时，整棵左列按左宽渲染：右栏 overlay 底下的列保持空白。
+  // overlay 只合成活视口，因此推进 scrollback 的行不带右栏快照——历史
+  // 与复制保持干净。
+  const splitRoot = {
+    invalidate: () => root.invalidate(),
+    render(width) {
+      if (!paneActive(width)) return root.render(width)
+      const left = Math.max(40, width - paneWidthOf(width) - 1)
+      return root.render(left)
+    },
+  }
+
+  tui.addChild(splitRoot)
   tui.setFocus(editor)
 
   // 输入监听：拦截应用级按键。
@@ -442,14 +500,14 @@ export function createApp(options) {
       return { consume: true }
     }
     if (matchesKey(data, Key.escape)) {
-      if (tui.hasOverlay()) return undefined
+      if (hasModalOverlay()) return undefined
       if (getState().turnActive === true) {
         onInterrupt()
         return { consume: true }
       }
       return undefined
     }
-    if (!tui.hasOverlay()) {
+    if (!hasModalOverlay()) {
       const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking']]
       for (const [key, command] of shortcuts) {
         if (matchesKey(data, key)) {
@@ -464,6 +522,14 @@ export function createApp(options) {
   return {
     tui,
     supportsPromptSignals: true,
+    /** 文件编辑右栏：'auto'（有编辑时出现，默认）| 'on'（常驻）| 'off'。 */
+    setPaneMode: (mode) => {
+      if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return
+      pane.mode = mode
+      editPane.invalidate()
+      tui.requestRender()
+    },
+    getPaneMode: () => pane.mode,
     /** 弹一个选择框，返回选中值或 undefined。供人机回环使用。 */
     choose: prompter.choose,
     /** 弹一个文本输入框，返回输入内容或 undefined。 */
@@ -520,6 +586,7 @@ export function createApp(options) {
       // **先**结算所有还等着的弹窗：否则退出路径上 `await kernel.dispose()`
       // 可能在等一个永远不来的审批回答，shutdown 就走不到 process.exit。
       prompter.cancelAll()
+      editPaneHandle?.hide?.()
       if (ticker !== undefined) clearInterval(ticker)
       unsubscribe()
       try {

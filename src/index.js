@@ -292,21 +292,57 @@ export async function apply(ctx) {
       app?.notice?.('没有可用的会话预设。')
       return
     }
-    const chosen = await app.choose({
-      title: '选择会话预设',
-      options: available.map((row) => ({
-        value: row.id,
-        label: `${row.name ?? row.id}${row.id === presetLabel ? '  ✓' : ''}`,
-        description: row.description ?? row.id,
-      })),
-    })
-    if (chosen === undefined || chosen === presetLabel) return
+
+    // 创造模式（对齐 Web 表面的引导）：preset 不是运行时对象，创建 = 让
+    // Agent 在 cordis 预设里起草一个「声明 preset 的 bundle」再安装。
+    // roster 带 cordis 预设时才出现这个入口——它自带 tool-cordis 与
+    // plugin-manager 工具，正是起草与安装所需的能力面。
+    const CREATOR_VALUE = '__creator__'
+    const options = available.map((row) => ({
+      value: row.id,
+      label: `${row.name ?? row.id}${row.id === presetLabel ? '  ✓' : ''}`,
+      description: row.description ?? row.id,
+    }))
+    if (available.some((row) => row.id === 'cordis')) {
+      options.unshift({
+        value: CREATOR_VALUE,
+        label: '✦ 创造模式 · 起草新预设',
+        description: '切到 cordis 预设，由 Agent 起草并安装声明预设的 bundle（空白会话）',
+      })
+    }
+
+    const chosen = await app.choose({ title: '选择会话预设', options })
+    if (chosen === undefined) return
+    if (chosen === CREATOR_VALUE) {
+      await startCreatorMode()
+      return
+    }
+    if (chosen === presetLabel) return
     try {
       presetLabel = await kernel.selectPreset(chosen)
       app?.notice?.(`已选择预设：${presetLabel}`)
     } catch (error) {
       app?.notice?.(`预设切换失败：${error?.message ?? error}`)
     }
+  }
+
+  /**
+   * 创造模式：把空白会话切到 cordis 预设，并预填一段引导输入。
+   *
+   * 与 Web 的 Creator 入口同一模式：preset 的创建由 Agent 完成（写成
+   * bundle → 安装），TUI 只负责把用户带进正确的预设和正确的起点。
+   * 仅空白会话可切——这是内核「会话产出过内容后工具集不可换」的规则，
+   * 失败时如实说明出路。
+   */
+  async function startCreatorMode() {
+    try {
+      presetLabel = await kernel.selectPreset('cordis')
+    } catch (error) {
+      app?.notice?.(`进入创造模式失败：${error?.message ?? error}\n（预设只能切换空白会话；已有对话时请重开一个会话再用 /preset create。）`)
+      return
+    }
+    app?.notice?.('已进入创造模式（cordis 预设）。说明你想要的预设——工具集、人格、提示段、技能——Agent 会起草 bundle 并安装；新预设装好后即可 /preset 选择。')
+    app?.setEditorText?.('帮我创建一个会话预设：')
   }
 
   // 底栏的数据源。它负责所有取数（token 计量、沙箱模式、git 分支、模型窗口），
@@ -428,12 +464,28 @@ export async function apply(ctx) {
           await selectPresetInteractively()
           return
         }
+        if (parsed.rest === 'create' || parsed.rest === 'creator') {
+          await startCreatorMode()
+          return
+        }
         try {
           presetLabel = await kernel.selectPreset(parsed.rest)
           app?.notice?.(`已选择预设：${presetLabel}`)
         } catch (error) {
           app?.notice?.(`预设切换失败：${error?.message ?? error}`)
         }
+        return
+      }
+      if (parsed.name === 'pane') {
+        // /pane           → auto → on → off → auto 轮换
+        // /pane auto|on|off → 直接设定
+        const current = app?.getPaneMode?.() ?? 'auto'
+        const mode = ['auto', 'on', 'off'].includes(parsed.rest) ? parsed.rest : undefined
+        const next = mode ?? (current === 'auto' ? 'on' : current === 'on' ? 'off' : 'auto')
+        app?.setPaneMode?.(next)
+        const hint = { auto: '有文件编辑时出现，回合结束保留最后状态（默认）', on: '常驻右栏', off: '关闭' }[next]
+        app?.notice?.(`文件编辑右栏：${next} · ${hint}`)
+        app?.requestRender?.()
         return
       }
       return

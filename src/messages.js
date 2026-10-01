@@ -20,22 +20,22 @@ import { rail, fit } from './layout.js'
 /**
  * 用户消息。
  *
- * 对齐 pi 的 `UserMessageComponent`：**上下各留一行**的有底色块，内容走 Markdown
- * 而不是纯文本（所以用户贴的代码块/列表也会被正确渲染），底色与文字各用一个
- * 专门的 token。
+ * 对齐 pi 的 `UserMessageComponent`：**纯底色块，零文字标签**——块本身
+ * 就是「这是你说的话」这一层。Box(1, 1) 即 pi 的 outputPad：内容左右各一列、
+ * 上下各一行呼吸位，整块（含呼吸位）铺 userMessageBg。内容走 Markdown。
  */
 export function userRenderer({ row, theme }) {
-  const box = new Box(1, 0, (text) => theme.bg('userMessageBg', text))
-  box.addChild(new Text(theme.bold(theme.fg('userMessageText', '❯ 你')), 0, 0))
-  box.addChild(new Markdown(row.text, 2, 0, theme.markdown, { color: (text) => theme.fg('userMessageText', text) }))
+  const box = new Box(1, 1, (text) => theme.bg('userMessageBg', text))
+  box.addChild(new Markdown(row.text, 0, 0, theme.markdown, { color: (text) => theme.fg('userMessageText', text) }))
   return box
 }
 
 /**
  * 助手正文。
  *
- * 对齐 pi 的 `AssistantMessageComponent`：正文**不铺底色**（方便复制），
- * 只有思考块用 `thinkingText` + 斜体。
+ * 对齐 pi 的 `AssistantMessageComponent`：正文**不铺底色**（方便复制）、
+ * **没有角色标签行**；思考是独立的一层——展开时是 thinkingText 斜体
+ * Markdown，折叠时是一行斜体提示。分层替代了一切标签。
  */
 export function assistantRenderer({ row, theme, registry }) {
   const container = new Container()
@@ -43,17 +43,19 @@ export function assistantRenderer({ row, theme, registry }) {
   const hasThinking = typeof row.reasoning === 'string' && row.reasoning.trim() !== ''
 
   if (hasThinking) {
-    // pi 的隐藏思考块是一行斜体标签；这里保持一致，但把行数也带上，
-    // 让人知道折叠了多少（pi 没带，这是本地的一点增益）。
     const lines = row.reasoning.trim().split('\n').length
     const expanded = registry?.display?.thinking === true
-    const label = expanded ? `思考 · ${lines} 行` : `思考 · ${lines} 行已折叠  /thinking 展开`
-    container.addChild(new Text(theme.fg('thinkingText', label), 1, 0))
-    if (expanded) container.addChild(new Markdown(row.reasoning, 1, 0, theme.markdown))
+    if (expanded) {
+      container.addChild(new Markdown(row.reasoning, 1, 0, theme.markdown, {
+        color: (text) => theme.fg('thinkingText', text),
+        italic: true,
+      }))
+    } else {
+      container.addChild(new Text(theme.italic(theme.fg('thinkingText', `思考 ${lines} 行 · /thinking 展开`)), 1, 0))
+    }
   }
 
   if (hasText) {
-    // 正文前留一行——与 pi 的 Spacer(1) 一致。
     container.addChild(new Markdown(row.text, 1, 0, theme.markdown))
   }
 
@@ -63,7 +65,7 @@ export function assistantRenderer({ row, theme, registry }) {
   return {
     invalidate: () => container.invalidate(),
     render(width) {
-      return [fit(theme.fg('accent', theme.bold('● DeepSeek')) + theme.fg('dim', row.done === false ? '  正在回应' : ''), width), ...container.render(width)]
+      return container.render(width)
     },
   }
 }

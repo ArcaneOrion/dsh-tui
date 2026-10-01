@@ -67,64 +67,69 @@ function makeSgr(depth) {
 
 // ── 默认 token 表（深色） ────────────────────────────────────────────────
 //
-// 取色偏「墨蓝 + 暖黄」，跟你在 pi 里调的 pi-theme 同一路数。
-// text 用空串 = 终端默认前景色，这样在浅色终端上也不会瞎。
+// 色板逐值取自用户在 pi 里调的 ~/.pi/agent/themes/pi-theme.json（墨蓝底 +
+// 暖黄 accent + cyan/cream），第三轮改版起 DSH-TUI 与 pi 同一套设计语言：
+// 分层靠底色块，不靠文字角色标签。
 
 export const DARK_TOKENS = Object.freeze({
-  // 基础文字
-  text: '',
-  muted: '#9aa8aa',
-  dim: '#718184',
+  // 基础文字（pi: text=cream, muted, dim=mutedDim）
+  text: '#fff8d6',
+  muted: '#c9deea',
+  dim: '#7a96aa',
 
-  // 强调 / 边框
-  accent: '#7aa2f7',
-  border: '#354849',
-  borderAccent: '#7aa2f7',
-  borderMuted: '#283738',
+  // 强调 / 边框（pi: accent=yellow, border=panel2, borderAccent=cyan, borderMuted=panel）
+  accent: '#ffd43b',
+  border: '#3a5d78',
+  borderAccent: '#35d8ff',
+  borderMuted: '#2e4c66',
 
-  // 状态
-  success: '#a8c88d',
-  error: '#ed9891',
-  warning: '#dfbb83',
+  // 状态（pi: success=cyan, error=danger, warning=orange）
+  success: '#35d8ff',
+  error: '#ff4d2e',
+  warning: '#ffb454',
 
-  // 角色
-  //
-  // 命名对齐 pi 的消息词汇（userMessageBg / userMessageText / thinkingText），
-  // 这样两边的设计语言是同一套——照着 pi 读代码时不用做心智翻译。
-  userMessageBg: '#242b38',
-  userMessageText: '#e4e4dc',
-  userBorder: '#7aa2f7',
-  assistantBorder: '#354849',
-  thinkingText: '#9aa8aa',
+  // 角色：只保留「层」的配色。用户消息是一整块 panel 底色（pi 的
+  // UserMessageComponent 没有任何标签行）；思考是 muted 斜体。
+  userMessageBg: '#2e4c66',
+  userMessageText: '#fff8d6',
+  userBorder: '#3a5d78',
+  assistantBorder: '#3a5d78',
+  thinkingText: '#c9deea',
 
-  // 工具
-  toolTitle: '#bdccc8',
-  toolOutput: '#c4ccca',
-  toolPendingBg: '#182324',
-  toolSuccessBg: '#182324',
-  toolErrorBg: '#2b2020',
+  // 工具（pi ToolExecutionComponent：整块底色随状态变，无状态文字）
+  toolTitle: '#ffd43b',
+  toolOutput: '#c9deea',
+  toolPendingBg: '#274159',
+  toolSuccessBg: '#1e3e4a',
+  toolErrorBg: '#3c2828',
 
-  // diff
-  diffAdded: '#a8c88d',
-  diffRemoved: '#ed9891',
-  diffContext: '#9aa8aa',
+  // diff（pi: toolDiffAdded=cyan, toolDiffRemoved=danger, toolDiffContext=mutedDim）
+  diffAdded: '#35d8ff',
+  diffRemoved: '#ff4d2e',
+  diffContext: '#7a96aa',
 
-  // 选择 / 背景
-  selectedBg: '#2b4341',
-  /** 弹窗面板底色：比 selectedBg 暗得多，读作「浮起来的面板」而不是一大块灰板。 */
-  panelBg: '#152021',
-  panelBorder: '#354849',
+  // 选择 / 背景（pi: selectedBg=panel2; 弹窗与右栏用更沉的 stageBg）
+  selectedBg: '#3a5d78',
+  /** 弹窗面板底色：stage 深蓝，读作「浮起来的面板」而不是一大块灰板。 */
+  panelBg: '#1a3045',
+  panelBorder: '#3a5d78',
+  /** 文件编辑右栏：常驻图层而非模态，与 stage 同级的深蓝。 */
+  paneBg: '#1a3045',
+  paneBorder: '#3a5d78',
 
-  // 底栏：每段一个色相（对照 pi 的实机配色），分隔线用暖琥珀。
-  footerBorder: '#c1843a',
-  dirLabel: '#88c8bc',
-  branchLabel: '#9aa8aa',
-  thinkLabel: '#dfbb83',
+  // 底栏：每段一个色相，与 pi 的 footer 数据段一致。
+  footerBorder: '#3a5d78',
+  dirLabel: '#35d8ff',
+  branchLabel: '#c9deea',
+  thinkLabel: '#ffb454',
 
-  // 输入框
-  editorBorder: '#354849',
-  editorBorderActive: '#7aa2f7',
-  welcomeBorder: '#c1843a',
+  // 输入框（pi 的 editor 边框 = border token；活跃态用 borderAccent）
+  editorBorder: '#3a5d78',
+  editorBorderActive: '#35d8ff',
+  welcomeBorder: '#ffb454',
+
+  // 语法高亮里的数字（pi: syntaxNumber=yellow2，与 keyword 的黄错开一档）
+  codeNumber: '#ffec80',
 })
 
 // ── 主题对象 ─────────────────────────────────────────────────────────────
@@ -171,15 +176,15 @@ export function createTheme(tokens = DARK_TOKENS, env = process.env) {
 
   const markdown = {
     heading: (t) => bold(fg('accent', t)),
-    link: (t) => fg('accent', underline(t)),
+    link: (t) => fg('success', underline(t)),
     linkUrl: (t) => fg('dim', t),
     code: (t) => fg('warning', t),
-    codeBlock: (t) => fg('toolOutput', t),
-    codeBlockBorder: (t) => fg('dim', t),
+    codeBlock: (t) => fg('text', t),
+    codeBlockBorder: (t) => fg('warning', t),
     quote: (t) => fg('muted', italic(t)),
-    quoteBorder: (t) => fg('dim', t),
-    hr: (t) => fg('dim', t),
-    listBullet: (t) => fg('accent', t),
+    quoteBorder: (t) => fg('border', t),
+    hr: (t) => fg('border', t),
+    listBullet: (t) => fg('success', t),
     bold: (t) => bold(t),
     italic: (t) => italic(t),
     strikethrough: (t) => strikethrough(t),
@@ -187,10 +192,12 @@ export function createTheme(tokens = DARK_TOKENS, env = process.env) {
     // 语法高亮：只认有把握的语言（注释/字符串/数字/关键字），其余返回
     // undefined，pi-tui 会退回 codeBlock 的纯色渲染。
     highlightCode: createHighlighter({
-      code: (t) => fg('toolOutput', t),
+      // pi-theme 的 syntax 映射：comment=mutedDim, keyword=yellow,
+      // string=orange, number=yellow2；非 token 基础文本保持 cream。
+      code: (t) => fg('text', t),
       comment: (t) => fg('dim', t),
-      string: (t) => fg('success', t),
-      number: (t) => fg('warning', t),
+      string: (t) => fg('warning', t),
+      number: (t) => fg('codeNumber', t),
       keyword: (t) => fg('accent', t),
     }),
   }

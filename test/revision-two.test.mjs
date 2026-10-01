@@ -35,7 +35,7 @@ test('Ctrl+T 按下切换、长按和松开保持，再按一次才折叠', asyn
   } finally { app.dispose() }
 })
 
-test('欢迎页包含鲸鱼和恢复入口，输入区无多余标题且保留 IME 标记', () => {
+test('欢迎页包含鲸鱼和恢复入口，输入区无边框外装饰且保留 IME 标记', () => {
   const banner = createBanner({ theme, getSubtitle: () => 'deepseek-flash', getWorkspace: () => '/project' })
   for (const width of [24, 32, 48, 80, 120]) {
     const lines = banner.render(width)
@@ -48,19 +48,25 @@ test('欢迎页包含鲸鱼和恢复入口，输入区无多余标题且保留 I
     app.editor.setText('中文草稿')
     const lines = app.editor.render(48)
     assert.ok(lines.every((line) => visibleWidth(line) <= 48))
-    assert.match(lines.join('\n'), /❯/)
+    // pi 式输入框：单线边框、无提示符。
+    assert.match(lines.join('\n'), /─/)
+    assert.doesNotMatch(lines.join('\n'), /❯/)
     assert.match(lines.join('\n'), /\x1b_pi:c\x07/)
     assert.doesNotMatch(lines.join('\n'), /写下你要做的事|继续输入/)
   } finally { app.dispose() }
 })
 
-test('用户与助手具有不同标识和背景，而不是只靠文本内容区分', () => {
+test('用户与助手靠图层区分：用户是纯底色块，助手无底色且零角色标签', () => {
   const user = userRenderer({ row: { text: '问题' }, theme }).render(80).join('\n')
   const assistant = assistantRenderer({ row: { text: '答案' }, theme }).render(80).join('\n')
-  assert.match(plain(user), /❯ 你/)
-  assert.match(plain(assistant), /● DeepSeek/)
+  // 用户：整块 userMessageBg 底色，内容保留，且没有任何文字角色标签。
   assert.match(user, /\x1b\[48;/)
+  assert.doesNotMatch(plain(user), /❯|你/)
+  assert.match(plain(user), /问题/)
+  // 助手：无底色、无「● DeepSeek」标签行——分层替代标签。
   assert.doesNotMatch(assistant, /\x1b\[48;/)
+  assert.doesNotMatch(plain(assistant), /●|DeepSeek/)
+  assert.match(plain(assistant), /答案/)
 })
 
 function harness({ prepareError, flushError, active = false, queued = [] } = {}) {
