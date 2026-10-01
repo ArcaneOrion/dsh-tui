@@ -230,8 +230,8 @@ test('启动时先清屏：不把 launcher/插件的开机日志留在界面上�
   const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal,
     getState: () => ({}), getSnapshot: () => ({}) })
   try {
-    assert.equal(terminal.cleared, false)
     app.start()
-    assert.equal(terminal.cleared, true, 'start() 必须先清屏再接管')
+    // 2J 清屏 + 3J 清 scrollback + H 回原点：开机日志连往上滚都不该看到。
+    assert.match(terminal.output, /\x1b\[2J\x1b\[3J\x1b\[H/, 'start() 必须先清屏（含 scrollback）再接管')
   } finally { app.dispose() }
 })

@@ -608,7 +608,11 @@ export function createApp(options) {
       // （`[model-channel-manager] booted …`、`[tavily-web] registered …` 这类），
       // pi-tui 的首帧又假定屏幕是干净的。清掉它们，界面从干净的一屏开始。
       try {
-        terminal.clearScreen?.()
+        // 2J 清屏、3J 连 scrollback 一起清、H 回原点：launcher 或插件在 TUI 起来前
+        // 打的日志（`[model-channel-manager] booted …` 这类）连往上滚都看不到。
+        // 只清屏（2J）时它们仍留在 scrollback 里，往上滚照样能看见。
+        if (typeof terminal.write === 'function') terminal.write('\x1b[2J\x1b[3J\x1b[H')
+        else terminal.clearScreen?.()
       } catch {
         // 清屏失败不阻止启动。
       }
