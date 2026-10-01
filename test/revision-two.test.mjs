@@ -203,3 +203,17 @@ test('Shift+Tab 触发权限循环（Claude Code 同款手感）', () => {
     assert.equal(commands.length, 1)
   } finally { app.dispose() }
 })
+
+test('输入栏是一整块底色：含边框行、铺满整行', () => {
+  const app = createApp({ theme, registry: createRegistry(), view: createView(), terminal: memoryTerminal(60, 20),
+    getState: () => ({}), getSnapshot: () => ({}) })
+  try {
+    app.editor.setText('中文草稿')
+    const lines = app.editor.render(60)
+    assert.ok(lines.length >= 3, '上下边框 + 内容')
+    for (const line of lines) {
+      assert.match(line, /\x1b\[48;/, '每一行（含边框）都要有底色')
+      assert.equal(visibleWidth(line), 60, '色块必须铺满整行')
+    }
+  } finally { app.dispose() }
+})

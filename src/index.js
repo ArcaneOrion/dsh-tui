@@ -549,10 +549,11 @@ export async function apply(ctx) {
           const spec = runtime.permission.resolve?.(name)
           return spec === undefined ? String(name) : `${name} · 沙箱 ${spec.sandbox} · 审批 ${spec.approval}`
         }
+        // 切换成功后**不插 notice**：状态行下面那行权限提示会立刻更新，
+        // 那才是持久回执（临时 notice 会往对话里塞行，反而更吵）。
         const apply = (name) => {
           try {
-            const applied = runtime.permission.set(name)
-            app?.notice?.(`权限已切换：${describe(applied)}`)
+            runtime.permission.set(name)
             app?.requestRender?.()
           } catch (error) {
             app?.notice?.(`权限切换失败：${error?.message ?? error}`)
@@ -561,8 +562,7 @@ export async function apply(ctx) {
 
         if (parsed.rest === 'cycle' || parsed.rest === 'next') {
           try {
-            const result = runtime.permission.cycle()
-            app?.notice?.(`权限已切换：${describe(result?.name)}`)
+            runtime.permission.cycle()
             app?.requestRender?.()
           } catch (error) {
             app?.notice?.(`权限切换失败：${error?.message ?? error}`)

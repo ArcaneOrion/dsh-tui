@@ -158,6 +158,8 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
   const limits = new Map()
   /** tokenMeter 的测量结果缓存：按会话日志版本号失效。 */
   let tokenCache = { seq: -1, used: undefined }
+  /** 权限预设缓存：`current()` 要折叠会话事件，不能每帧调。 */
+  let permissionCache = { seq: -1, value: undefined }
   /** 最近一次请求的真实路由（增量扫描，只读新事件）。 */
   let latestRouteCache
   let eventTail
@@ -219,6 +221,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
       eventTail = undefined
       latestRouteCache = undefined
       tokenCache = { seq: -1, used: undefined }
+      permissionCache = { seq: -1, value: undefined }
       gitCache.at = undefined
     }
     eventTail ??= createEventTail(session)
@@ -309,6 +312,32 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
     return undefined
   }
 
+  /**
+   * 当前权限预设（沙箱模式 + 审批策略的组合）。
+   *
+   * 状态行下面那行持久提示就是它。`current()` 要折叠会话事件，所以按会话
+   * seq 缓存——footer 每帧渲染，不能每帧折叠。服务缺失时整行消失。
+   */
+  function permissionInfo() {
+    const service = ctx.get('permissionPresets')
+    if (typeof service?.current !== 'function') return undefined
+    const session = getAgent()?.session
+    if (session === undefined || session === null) return undefined
+    const seq = session.seq ?? -1
+    if (permissionCache.seq === seq) return permissionCache.value
+
+    let value
+    try {
+      const name = service.current(session)
+      const spec = typeof service.resolve === 'function' ? service.resolve(name) : undefined
+      value = name === undefined || name === null ? undefined : { name, sandbox: spec?.sandbox, approval: spec?.approval }
+    } catch {
+      value = undefined
+    }
+    permissionCache = { seq, value }
+    return value
+  }
+
   return {
     /** 后台预热（异步部分只做一次）。 */
     warmUp: resolveContextLimit,
@@ -344,6 +373,7 @@ export function createFooterInfo({ ctx, getAgent, getSelection, cwd = process.cw
         branch: readGitBranch(activeCwd, Date.now(), gitCache),
         tokens: used === undefined ? undefined : { used, limit: recordedLimit ?? (key === limitKey ? contextLimit : undefined) },
         sandbox: shortSandboxMode(sandboxMode()),
+        permission: permissionInfo(),
         cpu: machine.cpu,
         mem: machine.mem,
         clock: machine.clock,
@@ -503,7 +533,25 @@ export class DefaultFooter {
       line += theme.bg(tailBg, ' '.repeat(width - filled))
     }
 
-    this.cache = [truncateToWidth(line, width, '')]
+    const bar = truncateToWidth(line, width, '')
+    const mode = this.modeLine(snapshot, width)
+    this.cache = mode === undefined ? [bar] : [bar, mode]
     return this.cache
+  }
+
+  /**
+   * 状态行**下面**持久显示的模式行，对齐 Claude Code 的
+   * `⏸ plan mode on (shift+tab to cycle)`。
+   *
+   * 权限预设可用时才出现；服务缺失时整行消失，不留占位。危险档（沙箱全开、
+   * 审批 never）用警示色，提醒这一档不再拦人。
+   */
+  modeLine(snapshot, width) {
+    const permission = snapshot.permission
+    if (permission === undefined || permission === null) return undefined
+    const danger = permission.sandbox === 'danger-full-access'
+    const icon = danger ? '⚠' : '⏸'
+    const text = ` ${icon} 权限 ${permission.name}（Shift+Tab 循环）`
+    return this.theme.fg(danger ? 'warning' : 'dim', fit(truncateToWidth(text, width, ''), width))
   }
 }

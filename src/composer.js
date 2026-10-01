@@ -1,7 +1,18 @@
-import { Editor } from '@earendil-works/pi-tui'
+import { Editor, visibleWidth } from '@earendil-works/pi-tui'
 import { fit } from './layout.js'
 
-/** Retain pi-tui's editor, IME marker, paste handling and autocomplete; replace its chrome. */
+/** 把一行补齐到 width 个显示列（不截断，只补空格）。 */
+function padTo(line, width) {
+  const visible = visibleWidth(line)
+  return visible >= width ? line : line + ' '.repeat(width - visible)
+}
+
+/**
+ * 保留 pi-tui Editor 的编辑能力（IME、粘贴、补全、历史），替换它的外观。
+ *
+ * 外观对齐 Claude Code 的输入区：**一整块底色**（含上下边框行），读作
+ * 「一块可以输入的色块」，与状态行的色块呼应；没有提示符、没有多余装饰。
+ */
 export class WorkbenchEditor extends Editor {
   constructor(tui, theme, getState = () => ({})) {
     super(tui, theme.editor, { paddingX: 1 })
@@ -15,11 +26,12 @@ export class WorkbenchEditor extends Editor {
     return lines.map((line, index) => {
       // Editor rows have padding; border rows begin with a rule. Preserve its
       // scroll markers and cursor/IME escape sequences exactly.
-      //
-      // pi 的输入框就是 pi-tui Editor 的原生框体：上下两道单线边框、
-      // 内容行自带内边距——没有提示符，没有装饰。
-      if (index === 0 || plainText(line).startsWith('─')) return theme.fg('border', fit('──' + plainText(line), width))
-      return fit('  ' + line, width)
+      const isBorder = index === 0 || plainText(line).startsWith('─')
+      const content = isBorder
+        ? theme.fg('border', fit('──' + plainText(line), width))
+        : fit('  ' + line, width)
+      // 整块铺底色：先补齐宽度再包背景色，这样色块一直铺到最右边。
+      return theme.bg('editorBg', padTo(content, width))
     })
   }
 }

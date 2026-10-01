@@ -423,3 +423,41 @@ test('createFooterInfo 的 measure 抛错时降级为不显示用量', () => {
   assert.doesNotThrow(() => info.snapshot())
   assert.equal(info.snapshot().tokens, undefined)
 })
+
+// ── 状态行下面的持久权限行 ───────────────────────────────────────────────
+
+test('状态行下面持久显示权限行；危险档用警示色，无服务时整行消失', () => {
+  const safe = makeFooter({ model: 'p/m', permission: { name: 'workspace-write', sandbox: 'workspace-write', approval: 'ask' } })
+  const lines = safe.render(120)
+  assert.equal(lines.length, 2, '状态行 + 权限行')
+  assert.match(stripAnsi(lines[1]), /权限 workspace-write/)
+  assert.match(stripAnsi(lines[1]), /Shift\+Tab 循环/)
+  assert.doesNotMatch(lines[1], /\x1b\[38;2;224;175;104m/, '安全档不用警示色')
+
+  const danger = makeFooter({ model: 'p/m', permission: { name: 'danger-full-access', sandbox: 'danger-full-access', approval: 'never' } })
+  const dangerLines = danger.render(120)
+  assert.match(stripAnsi(dangerLines[1]), /⚠/)
+  assert.match(dangerLines[1], /\x1b\[38;2;224;175;104m/, '危险档用 warning 色提醒不再拦人')
+
+  // 没有权限服务：不留占位，退回单行。
+  const none = makeFooter({ model: 'p/m' })
+  assert.equal(none.render(120).length, 1)
+})
+
+test('权限读取按会话 seq 缓存：current 不每帧折叠事件', () => {
+  let calls = 0
+  const session = { seq: 3, header: { cwd: '/tmp' } }
+  const info = createFooterInfo({
+    ctx: { get: (name) => name === 'permissionPresets' ? {
+      current: () => { calls += 1; return 'workspace-write' },
+      resolve: () => ({ sandbox: 'workspace-write', approval: 'ask' }),
+    } : undefined },
+    getAgent: () => ({ session }), getSelection: () => undefined, cwd: '/tmp',
+  })
+  assert.equal(info.snapshot().permission.name, 'workspace-write')
+  info.snapshot(); info.snapshot()
+  assert.equal(calls, 1, '同一 seq 只读一次')
+  session.seq = 4
+  info.snapshot()
+  assert.equal(calls, 2, 'seq 变了才重新读')
+})
