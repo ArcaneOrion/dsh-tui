@@ -221,3 +221,40 @@ test('invalidate() 会清掉行级缓存（换主题后必须全部重画）', (
   chat.render(WIDTH)
   assert.equal(calls, 2, '显式 invalidate 之后必须重画，否则换主题不生效')
 })
+
+test('不支持的代码语言、无语言围栏和未闭合围栏都保留完整助手正文', () => {
+  for (const language of ['', 'diff', 'markdown', 'yaml', 'unknown-language', 'js']) {
+    for (const closed of [true, false]) {
+      const { registry } = makeRegistry()
+      const view = createView()
+      const text = '修改说明\n\n```' + language + '\n-old\n+new' + (closed ? '\n```\n\n完成说明' : '')
+      view.rows.push({ key: 'code', role: 'assistant', text, done: true })
+      const lines = new ChatView({ view, theme, registry }).render(WIDTH)
+      const result = lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '')
+      assert.doesNotMatch(result, /渲染.*失败|not iterable/)
+      assert.match(result, /修改说明/)
+      assert.match(result, /-old/)
+      assert.match(result, /\+new/)
+      if (closed) assert.match(result, /完成说明/)
+      assertWithinWidth(lines, WIDTH, language || '无语言')
+    }
+  }
+})
+
+test('代码块逐字符流式生成及展开思考时不产生渲染失败行', () => {
+  const { registry } = makeRegistry()
+  const view = createView()
+  const chat = new ChatView({ view, theme, registry })
+  const text = '修改说明\n\n```diff\n-old\n+new\n```\n\n完成说明'
+  for (let end = 1; end <= text.length; end++) {
+    view.streaming = { key: 'stream-code', text: text.slice(0, end), reasoning: '' }
+    view.revision++
+    assert.doesNotMatch(chat.render(WIDTH).join('\n'), /渲染.*失败|not iterable/)
+  }
+  registry.display.thinking = true
+  view.streaming = { key: 'stream-code', text, reasoning: '```\n推理中的代码\n```' }
+  view.revision++
+  const result = chat.render(WIDTH).join('\n')
+  assert.doesNotMatch(result, /渲染.*失败|not iterable/)
+  assert.match(result, /推理中的代码/)
+})

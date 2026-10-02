@@ -69,9 +69,12 @@ const highlight = createHighlighter({
   keyword: ink('keyword'),
 })
 
-test('高亮：不认识的语言返回 undefined（让 pi-tui 退回纯色）', () => {
-  assert.equal(highlight('whatever', 'brainfuck'), undefined)
-  assert.equal(highlight('whatever', undefined), undefined)
+test('高亮：未知或未标注语言返回纯色文本行，满足 pi-tui 数组契约', () => {
+  for (const language of ['brainfuck', 'diff', 'markdown', undefined]) {
+    const lines = highlight('第一行\n\n  last\n', language)
+    assert.deepEqual(lines.map(strip), ['第一行', '', '  last', ''])
+    assert.ok(lines.every(line => line.startsWith('<code>')))
+  }
 })
 
 test('高亮：关键字被标记，且文本内容一字不改', () => {

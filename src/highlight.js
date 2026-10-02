@@ -2,8 +2,8 @@
  * 极简语法高亮。
  *
  * 只做**有把握**的那几类：注释、字符串、数字、关键字。不做"大概齐"的正则
- * 猜测——把代码高亮错比不高亮难看得多。语言不认识就直接返回 undefined，
- * 让 pi-tui 退回纯色代码块。
+ * 猜测——把代码高亮错比不高亮难看得多。语言不认识就返回纯色文本行。
+ * pi-tui 只要配置了 highlightCode 就会直接遍历返回值，不接受 undefined。
  *
  * 接在 MarkdownTheme.highlightCode 上，见 theme.js。
  */
@@ -85,14 +85,14 @@ function keywordFamily(lang) {
  * @param {(text:string)=>string} string_
  * @param {(text:string)=>string} number
  * @param {(text:string)=>string} keyword
- * @returns {(codeText:string, lang?:string)=>string[]|undefined}
+ * @returns {(codeText:string, lang?:string)=>string[]}
  */
 export function createHighlighter({ code, comment, string: stringFn, number, keyword }) {
   return function highlight(codeText, lang) {
     const normalized = String(lang ?? '').toLowerCase()
     const family = keywordFamily(normalized)
-    // 不认识的语言不猜：返回 undefined，pi-tui 退回纯色渲染。
-    if (family === undefined) return undefined
+    // 包括流式过程中尚未输入语言名的围栏，都必须满足 string[] 契约。
+    if (family === undefined) return String(codeText ?? '').split('\n').map(line => code(line))
 
     const keywords = new Set(KEYWORDS[family])
     const lineComment = LINE_COMMENT[normalized]

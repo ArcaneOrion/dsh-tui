@@ -324,8 +324,7 @@ export function createTheme(tokens = DARK_TOKENS, env = process.env) {
     italic: (t) => italic(t),
     strikethrough: (t) => strikethrough(t),
     underline: (t) => underline(t),
-    // 语法高亮：只认有把握的语言（注释/字符串/数字/关键字），其余返回
-    // undefined，pi-tui 会退回 codeBlock 的纯色渲染。
+    // 语法高亮：支持的语言着色，其余返回纯色文本行，始终满足 pi-tui 的数组契约。
     highlightCode: createHighlighter({
       code: (t) => fg('codeFg', t),
       comment: (t) => fg('dim', t),
