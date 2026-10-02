@@ -48,3 +48,27 @@
 - 生成对照：同一 fixture 基线 37 行、第一版 30 行；48 与 100 列均零宽度越界。
 - 1000 条历史 / 20 次界面更新：基线额外渲染 20000 行，第一版 0；仅计受控工作负载，不推论网络延迟。
 - Chromium 已截图检查对照页；终端配色与浏览器展示可能因字体不同略有差异。
+
+## 2026-10-01 Cordis 审查初始发现
+- 工作区初始干净；HEAD ac880bb。
+- 历史 progress 记录：cordis preset 缺少 cordisInspect 宿主依赖；权限服务已存在但无 TUI 入口；startup-info 有代码和测试却未接入。
+- 以上是历史记录，需要结合代码验证，不能直接归因为 Cordis 内核缺陷。
+- 代码确认：createKernel 在 apply 期间等待 preset.resolve，250ms 轮询、20s 超时；UI 在其后创建，因此启动依赖问题挡住修复入口。
+- index.js 声明最小 inject，但 cordis.patch.yml 又声明 agents/sessions/agentDefaultModel 必需依赖；软降级与装配层硬等待并存。
+- prompts.choose 默认异常路径仍 finish(undefined)，仅 DEBUG_PROMPT=1 写错误；异常与用户取消仍混为同一结果。
+- 当前历史只覆盖 2026-09-30 至 10-01 的 TUI 仓库，不能代表上游 Cordis 的长期演化。
+- 隔离复现：showOverlay 抛错与用户 Esc 都返回 undefined，无法区分；无 DEBUG 开关时无错误反馈。
+- 隔离复现：parseArgs(['--model','--preset','cordis']) 返回 model='--preset'、prompt='cordis' 且无 error。
+- 隔离复现：无任何内核服务时命令清单仍含 permission，与 README 的缺服务隐藏入口描述不符。
+- 内核 preset.select 在 turnBoundary.lastTurn > 0 时拒绝切换；创造模式承诺装好后 /preset 选择，但创建本身用掉一个回合，原会话切换必然被锁。TUI 自己没有 /new，需重开进程或依赖宿主额外命令。
+- Loader index.ts:134 将 YAML inject 合并进 fiber.inject，确认代码最小 inject 无法取消 YAML 的硬依赖。
+- 本轮最终判断与证据分级见 docs/CORDIS-REVIEW-2026-10-01.md；全部 337 项现有测试通过仍不覆盖创造模式从创建到使用的完整闭环。
+
+## 2026-10-01 右侧文件视图讨论
+- 用户实际关注会话流与文件编辑视图分工，而非 Cordis 插件架构审查。
+- 现有 EditPane 为 nonCapturing overlay，右侧固定 36%，终端少于 96 列隐藏；左侧整棵布局缩窄。
+- 右栏只持有最后一次 diff 工具调用，回合结束保留；不能独立滚动、不能切换文件，长行截断；因此只是编辑预览，不是完整审阅视图。
+- 现有源码关于“与 Claude Code 一致”的注释仅是旧实现声称，本轮需用当前官方资料核验。
+- 当前 Claude Code 官方 interactive-mode 文档明确：v2.1.260+、fullscreen、git、至少110列可打开持久 /diff 侧栏，144列首次编辑自动打开；文件列表+增删数+diff、独立滚动、选区加入下一条提问、会话/未提交/分支基线切换；非fullscreen降级为占输入区的 viewer。
+- 官方 Desktop 支持 chat/diff/file/terminal 等可重排 pane，Normal 模式折叠工具摘要；VS Code 的 Focus view、终端的 /focus 进一步压缩过程。不同入口不能混同。
+- Tavily 搜索经授权安装依赖后遭远端 SSL EOF，未取得搜索证据；本轮依据已直接取得的官方文档与官方 CHANGELOG，不引用搜索摘要。
