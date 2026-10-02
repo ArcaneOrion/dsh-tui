@@ -7,14 +7,15 @@
  * `[model-channel-manager] booted, groups: ...`。
  *
  * 做法：**只接管 `console.*`，绝不碰 `process.stdout.write`**——后者是 pi-tui
- * 渲染用的通道，接管了就等于把渲染搞坏。杂散内容写进文件（信息不丢），
- * 并在界面上提示一次「有东西往 stdout 打了日志，重定向到了哪里」。
+ * 渲染用的通道，接管了就等于把渲染搞坏。日志正文交给 TUI 作为普通消息
+ * 显示，同时保留文件记录。用户直接看到内容，不再看到重定向机制的通知。
  *
  * 忠于原样：日志文件里保留原始参数、级别与时间，方便排查插件问题。
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { formatWithOptions, stripVTControlCharacters } from 'node:util'
 
 /** 接管的 console 方法。 */
 const METHODS = ['log', 'info', 'warn', 'error', 'debug', 'trace']
@@ -24,37 +25,38 @@ const METHODS = ['log', 'info', 'warn', 'error', 'debug', 'trace']
  *
  * @param {object} options
  * @param {string} options.logPath - 杂散输出落到哪里
- * @param {(message:string)=>void} [options.onFirst] - 第一次拦截时提示一次
+ * @param {(record:{level:string,text:string})=>void} [options.onRecord] - 交给 TUI 显示日志正文
  * @returns {() => void} 还原（必须挂进 ctx.effect）
  */
-export function installConsoleGuard({ logPath, onFirst }) {
+export function installConsoleGuard({ logPath, onRecord }) {
   const original = {}
   for (const method of METHODS) original[method] = console[method]
 
-  let notified = false
-  let count = 0
+  let delivering = false
 
   const record = (method, args) => {
-    count += 1
+    let text
     try {
-      const line = `${new Date().toISOString()} [${method}] ${args
-        .map((a) => (typeof a === 'string' ? a : safeInspect(a)))
-        .join(' ')}\n`
+      // 保留 console 的占位符、对象和 Error 堆栈语义；不把终端控制序列交给布局器。
+      text = stripVTControlCharacters(formatWithOptions({ colors: false }, ...args)).replace(/\r\n?/g, '\n')
+    } catch {
+      text = args.map(safeInspect).join(' ')
+    }
+    try {
+      const line = `${new Date().toISOString()} [${method}] ${text}\n`
       fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
       fs.appendFileSync(logPath, line, { mode: 0o600 })
     } catch {
       // 记不下来也不能让被接管的 console 抛错——那会让调用方炸在莫名其妙的地方。
     }
 
-    if (!notified) {
-      notified = true
+    if (!delivering) {
+      delivering = true
       try {
-        onFirst?.(
-          `有插件往控制台打日志，已重定向到 ${logPath}（否则会搅乱画面）`,
-        )
+        onRecord?.({ level: method, text })
       } catch {
-        // 提示失败无所谓。
-      }
+        // 显示失败仍保留文件记录，也不能影响产生日志的插件。
+      } finally { delivering = false }
     }
   }
 

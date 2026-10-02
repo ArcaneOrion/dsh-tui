@@ -49,19 +49,18 @@ test('warn / error / info / debug 一并接管', () => {
   for (const level of ['warn', 'error', 'info', 'debug']) assert.match(text, new RegExp(`\\[${level}\\]`))
 })
 
-test('第一次拦截时提示一次，之后不再提示', () => {
+test('每条日志都传递正文与级别，不再用重定向通知代替正文', () => {
   const logPath = tempLog()
   const notices = []
-  const restore = installConsoleGuard({ logPath, onFirst: (m) => notices.push(m) })
+  const restore = installConsoleGuard({ logPath, onRecord: (m) => notices.push(m) })
   try {
     console.log('1')
-    console.log('2')
-    console.log('3')
+    console.warn('2')
+    console.error('3')
   } finally {
     restore()
   }
-  assert.equal(notices.length, 1, '只提示一次，否则会把对话区刷屏')
-  assert.match(notices[0], /stray\.log|重定向/)
+  assert.deepEqual(notices, [{ level: 'log', text: '1' }, { level: 'warn', text: '2' }, { level: 'error', text: '3' }])
 })
 
 test('restore 之后 console 恢复原样（不会永久劫持进程）', () => {
@@ -82,7 +81,7 @@ test('非字符串参数也能安全成行', () => {
     restore()
   }
   const text = fs.readFileSync(logPath, 'utf8')
-  assert.match(text, /"a":1/)
+  assert.match(text, /a: 1/)
   assert.match(text, /42/)
 })
 
@@ -110,11 +109,11 @@ test('日志路径写不进去时也不抛错', () => {
   }
 })
 
-test('onFirst 抛错不影响拦截本身', () => {
+test('显示回调抛错不影响文件记录', () => {
   const logPath = tempLog()
   const restore = installConsoleGuard({
     logPath,
-    onFirst: () => {
+    onRecord: () => {
       throw new Error('notice exploded')
     },
   })
@@ -124,4 +123,20 @@ test('onFirst 抛错不影响拦截本身', () => {
     restore()
   }
   assert.match(fs.readFileSync(logPath, 'utf8'), /仍然要被记下来/)
+})
+
+test('保留占位符和错误堆栈，移除控制序列；回调中的日志不会递归显示', () => {
+  const logPath = tempLog(), records = []
+  const restore = installConsoleGuard({ logPath, onRecord(record) {
+    records.push(record)
+    console.debug('显示器内部日志')
+  } })
+  try {
+    console.info('\x1b[2J[plugin] loaded %d tools', 3)
+    console.error(new Error('连接失败'))
+  } finally { restore() }
+  assert.equal(records.length, 2)
+  assert.equal(records[0].text, '[plugin] loaded 3 tools')
+  assert.match(records[1].text, /Error: 连接失败\n\s+at /)
+  assert.match(fs.readFileSync(logPath, 'utf8'), /显示器内部日志/)
 })

@@ -81,6 +81,7 @@ Ctrl+T 按一次切换思考显示，长按重复与松开事件不会再次切�
 - 启动时先清屏再接管（launcher/插件在 TUI 起来前打的日志不再留在界面上方），随后在对话区写一块 **pi 式开机信息**（`[Context]` / `[Commands]` / `[Plugins]` / `[Theme]`，列出本次实际加载的 cordis 行），随对话滚入 scrollback。
 - 状态行**下面**还有一行持久权限提示（`⏸ 权限 <预设>（Shift+Tab 循环）`，危险档转警示色 ⚠），对齐 Claude Code 的 `⏸ plan mode on (shift+tab to cycle)`。底部区域预览见 [docs/bottom-area.png](docs/bottom-area.png)。
 - 工具预览短小，完整结果在 `/inspect`；面板打开时可以读取工具的新结果。
+- TUI 接管后，插件的 `console` 日志正文直接显示在会话中；普通日志淡色，警告和错误按级别显示，同时保留日志文件记录。
 - 审批与提问只认领当前 TUI 所属 Agent 树，支持独立取消、多选、自定义答案与计划全文审阅。
 - 子 Agent 的“未驻留”不表示成功完成。
 

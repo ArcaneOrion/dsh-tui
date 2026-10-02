@@ -760,7 +760,10 @@ export async function apply(ctx) {
   // （那是 pi-tui 的渲染通道）。见 src/console-guard.js。
   const restoreConsoleGuard = installConsoleGuard({
     logPath: path.join(path.dirname(prefs.file), 'stray-console.log'),
-    onFirst: (message) => app?.notice?.(message),
+    onRecord: ({ level, text }) => app?.pushRow?.({
+      role: level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'notice',
+      text,
+    }),
   })
   restoreConsole = restoreConsoleGuard
 
