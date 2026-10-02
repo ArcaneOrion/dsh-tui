@@ -72,3 +72,8 @@
 - 当前 Claude Code 官方 interactive-mode 文档明确：v2.1.260+、fullscreen、git、至少110列可打开持久 /diff 侧栏，144列首次编辑自动打开；文件列表+增删数+diff、独立滚动、选区加入下一条提问、会话/未提交/分支基线切换；非fullscreen降级为占输入区的 viewer。
 - 官方 Desktop 支持 chat/diff/file/terminal 等可重排 pane，Normal 模式折叠工具摘要；VS Code 的 Focus view、终端的 /focus 进一步压缩过程。不同入口不能混同。
 - Tavily 搜索经授权安装依赖后遭远端 SSL EOF，未取得搜索证据；本轮依据已直接取得的官方文档与官方 CHANGELOG，不引用搜索摘要。
+
+## 2026-10-02 实现中的截图纠偏
+- 用户提供 /tmp/codex-clipboard-HwIvbg.png：右栏是正文旁独立深灰面板；输入框和状态栏横跨整个终端，面板止于输入上方。
+- 已实际读取图片，调整分栏只作用于正文，底部独立按全宽渲染；面板高度随多行输入/状态栏变化，保留一行间隔。
+- 右栏改为 #242424 实底、灰白标题/分隔、文件列表和选中文件 diff；去除蓝色竖边，减少默认快捷键提示。保留绿色/红色增删。

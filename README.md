@@ -48,13 +48,20 @@ npm run demo
 | `/model` | 渠道 → 模型 → 推理强度选择 |
 | `/model provider/model` | 校验后写入会话事件，下一步生效 |
 | `/preset` | standard / ptc / minimal / cordis；仅内核认可的空白会话可切换。`/preset create` 进入创造模式（切到 cordis 预设，由 Agent 起草并安装声明预设的 bundle） |
-| `/pane` | 文件编辑右栏：`/pane`（auto→on→off 轮换）或 `/pane auto\|on\|off`。Edit/Write 运行时右侧出现 diff，回合结束保留最后状态；窄终端（<96 列）自动收起 |
+| `/diff`、`F6` | 文件改动视图；`/diff` 开关面板，F6 进入/退出浏览。小于 120 列时打开全文审阅 |
+| `/pane` | `/pane auto\|on\|off` 控制右侧面板并记住选择。auto 在至少 144 列、有编辑时出现；已打开的面板至少 120 列即可保留。回合结束保留改动 |
 | `Shift+Tab`、`/permission` | 权限预设循环 / 选择：`read-only` → `workspace-write` → `danger-full-access`，每档同时定沙箱模式与审批策略（切换写进会话日志，底栏权限段与后续工具调用立即跟随）；`/permission <name>` 直接切 |
 | `/theme` | 选择主题配色：`/theme` 弹选择器，`/theme blue\|pi` 直接切。热切即时生效并记住（默认 blue：深蓝底 + 蓝 accent；pi：墨蓝底 + 暖黄） |
 | `/help` | TUI 与原生命令，包括已启用的压缩、计划、目标等功能 |
 | `/doctor` | 真实服务接入诊断 |
 
 全文面板：`↑↓` / `j k` 滚动，`PgUp/PgDn` 翻页，`Home/End` / `g G` 到首尾，`Esc` 返回。面板打开时 Esc 优先关面板；回到编辑器后 Esc 中断回合，保留待处理输入。空闲时 Ctrl+C 退出，运行时连续两次 Ctrl+C 退出。
+
+文件面板只占正文右侧 42%，**输入框与状态栏保持全宽**；面板高度随输入框变化，在输入区上方结束。外观采用独立深灰面板，参照 Claude Code 文件侧栏。左侧保留编辑摘要，完整 diff 在右侧查看。支持键盘浏览：F6 聚焦后，`[` / `]` 切文件，`↑↓` / `PgUp/PgDn` 滚动，`←→` 看长行，`f` 恢复跟随，`b` 切换范围，`r` 刷新，`x` 关闭，Esc 返回输入。浏览时保留草稿；主动选文件或滚动会固定阅读位置，新编辑不会抢走焦点。
+
+Git 工作区默认显示 **未提交改动（含已有改动）**，覆盖 Bash、格式化器与外部编辑；在工具完成后和面板打开期间刷新。`b` 可切回 **会话编辑记录（各文件最近一次修改片段）**，这里的行号是片段内行号。没有 Git 时自动使用编辑记录。最多读取 60 个改动文件；较大或二进制新增文件显示说明。首版使用键盘审阅，尚未接入鼠标选区和直接编辑。
+
+直接体验：`npm run demo:files`（固定数据，不调用模型），或在 `dsh tui` 中运行 `/diff` 查看当前工作区。[效果预览](docs/file-pane-preview/index.html) · [截图](docs/file-pane-preview/preview.png)。
 
 Ctrl+T 按一次切换思考显示，长按重复与松开事件不会再次切换。`/resume` 先准备目标会话并保存当前会话，成功后更新历史、模型、预设与状态栏；失败保留当前会话。当前回合、子 Agent 正在运行或仍有待处理输入时，先结束工作或通过 `/queue` 处理队列，再切换。列表显示最近 100 个可恢复的非驻留主会话；也可以直接传完整 ID。
 
@@ -101,6 +108,8 @@ npm test
 npm run check
 npm run audit
 npm run demo
+npm run demo:files
+npm run preview:files
 npm run design:preview
 ```
 

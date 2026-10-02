@@ -1,0 +1,20 @@
+[
+  {
+    "id": "wide",
+    "width": 160,
+    "height": 36,
+    "overflow": 0
+  },
+  {
+    "id": "compact",
+    "width": 120,
+    "height": 32,
+    "overflow": 0
+  },
+  {
+    "id": "narrow",
+    "width": 88,
+    "height": 30,
+    "overflow": 0
+  }
+]
