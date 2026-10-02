@@ -319,6 +319,9 @@ export function createPrompter({ tui, theme }) {
   return {
     choose,
     askText,
+    custom(build, options = {}) {
+      return open(build, { anchor: 'center', width: '100%', maxWidth: '100%', maxHeight: '100%', ...options })
+    },
     document({ title, text, signal }) {
       return open((finish) => new DocumentView({ title, text, theme,
         getHeight: () => tui.terminal?.rows ?? 24, onClose: () => finish(true) }),

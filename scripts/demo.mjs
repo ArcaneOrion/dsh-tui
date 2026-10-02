@@ -7,21 +7,27 @@ import { createBanner } from '../src/banner.js'
 import { createWorkbench } from '../src/workbench.js'
 import { createCommandAutocomplete, LOCAL_COMMANDS, helpText, parseCommandLine } from '../src/commands.js'
 import { fixtureEvents, fixturePresent, fixtureSnapshot, fixtureRuntime } from './fixtures.mjs'
+import { populateFilePaneDemo } from './file-pane-fixtures.mjs'
 
 const theme = createTheme(), registry = createRegistry(), view = createView()
 installDefaultRenderers(registry)
-for (const event of fixtureEvents) applySessionEvent(view, event, fixturePresent)
+const filesDemo = process.argv.includes('--files')
+if (filesDemo) populateFilePaneDemo(view)
+else for (const event of fixtureEvents) applySessionEvent(view, event, fixturePresent)
 const runtime = fixtureRuntime()
 let app, workbench
 async function command(line) {
   const parsed = parseCommandLine(line)
   if (!parsed) return
+  if (parsed.name === 'diff') return app.showDiff()
+  if (parsed.name === 'pane') { app.setPaneMode(['auto', 'on', 'off'].includes(parsed.rest) ? parsed.rest : 'on'); return }
   if (await workbench.execute(parsed.name, parsed.rest)) return
   if (parsed.name === 'exit' || parsed.name === 'quit') return exit()
   await app.document({ title: '演示模式', text: helpText(LOCAL_COMMANDS) + '\n\n模型和预设切换请在 dsh tui 中使用。演示不会调用模型、修改文件或保存会话。' })
 }
 function exit() { app?.dispose(); process.exit(0) }
 app = createApp({ view, theme, registry,
+  initialPaneMode: filesDemo ? 'on' : 'auto',
   getSnapshot: () => fixtureSnapshot, getState: () => ({ turnActive: false }), getQueueState: runtime.snapshot,
   getSessionLabel: () => 'demo-v1',
   combineProviders: () => createCommandAutocomplete({ list: () => LOCAL_COMMANDS }),
@@ -30,7 +36,8 @@ app = createApp({ view, theme, registry,
   onInterrupt() {}, onExit: exit,
 })
 workbench = createWorkbench({ app, kernel: { runtime, submit: runtime.submit }, view, registry, runCommand: command })
-registry.setHeader(createBanner({ theme, getSubtitle: () => '交互演示 · 固定样例 · 无网络请求', getPreset: () => 'DESIGN 02', hasConversation: () => view.rows.length > 0 }))
+if (!filesDemo) registry.setHeader(createBanner({ theme, getSubtitle: () => '交互演示 · 固定样例 · 无网络请求', getPreset: () => 'DESIGN 02', hasConversation: () => view.rows.length > 0 }))
+if (filesDemo) { app.editPane.follow = false; app.editPane.selected = 'src/session.ts' }
 process.on('SIGTERM', exit)
 process.on('SIGINT', exit)
 app.start()

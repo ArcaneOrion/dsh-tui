@@ -17,6 +17,7 @@
  */
 
 import { MessageRole } from './registry.js'
+import { createFileChanges, recordFileChange } from './file-changes.js'
 
 /** 生成单调递增的行 key。 */
 let rowSeq = 0
@@ -84,6 +85,8 @@ export function createView() {
      * 是右栏组件（src/edit-pane.js）的缓存键。
      */
     editPane: null,
+    fileChanges: createFileChanges(),
+    changeRevision: 0,
     contextRevision: 0,
     step: undefined,
     turn: undefined,
@@ -251,10 +254,12 @@ export function applySessionEvent(view, event, present = undefined) {
           status: 'running',
         }
       }
+      recordFileChange(view, row, callView, 'running')
       return true
     }
 
     case 'tool/result': {
+      view.changeRevision = (view.changeRevision ?? 0) + 1
       const callId = data?.message?.toolCallId
       const row = typeof callId === 'string' ? view.tools.get(callId) : undefined
       const text = textOfContent(data?.message?.content)
@@ -276,6 +281,7 @@ export function applySessionEvent(view, event, present = undefined) {
         row.errorReason = data?.error?.reason
         row.finishedAt = event.time
         row.resultView = resolveResultView(row.toolName, row.args)
+        recordFileChange(view, row, row.resultView?.card === 'diff' ? row.resultView : row.callView, isError ? 'error' : 'done')
         row.rev = (row.rev ?? 0) + 1
         // 右栏只认领自己那次调用的结果；其他工具的结果不动它。
         if (view.editPane !== null && view.editPane.callId === callId) {

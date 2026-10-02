@@ -37,6 +37,7 @@ function sanitize(raw) {
   if (typeof raw.model === 'string' && raw.model !== '') out.model = raw.model
   if (typeof raw.provider === 'string' && raw.provider !== '') out.provider = raw.provider
   if (typeof raw.theme === 'string' && raw.theme !== '') out.theme = raw.theme
+  if (['auto', 'on', 'off'].includes(raw.paneMode)) out.paneMode = raw.paneMode
   return out
 }
 

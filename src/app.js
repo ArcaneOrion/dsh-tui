@@ -36,14 +36,14 @@ const DEFAULT_WORKING_INTERVAL = 100
 
 // ── 文件编辑右栏的布局常量 ────────────────────────────────────────────────
 //
-// 宽度以百分比字符串注册进 overlay（"36%"），resize 时 pi-tui 按当前列数重新
+// 宽度以百分比字符串注册进 overlay，resize 时 pi-tui 按当前列数重新
 // 解析。paneWidthOf 必须与 pi-tui parseSizeValue 的取整逐位一致
-// （Math.floor(width * 36 / 100)），否则左列与右栏之间会错位。
+// （Math.floor(width * PANE_WIDTH_PERCENT / 100)），否则左列与右栏之间会错位。
 
 /** 终端窄于这个列数时不分栏：编辑区太窄比没有右栏更伤。 */
-const MIN_SPLIT_COLUMNS = 96
+const MIN_SPLIT_COLUMNS = 120
 /** 右栏占终端宽度的百分比。 */
-const PANE_WIDTH_PERCENT = 36
+const PANE_WIDTH_PERCENT = 42
 
 function paneWidthOf(width) {
   return Math.floor((width * PANE_WIDTH_PERCENT) / 100)
@@ -220,13 +220,77 @@ export function createApp(options) {
   //
   // mode: 'auto' = 有编辑时出现（默认，Claude Code 行为：编辑时出现、回合
   // 结束保留最后状态）；'on' = 常驻；'off' = 关闭。/pane 命令切换。
-  const pane = { mode: 'auto' }
+  const pane = { mode: options.initialPaneMode ?? 'auto', opened: false }
   const paneActive = (width) => {
-    if (pane.mode === 'off' || width < MIN_SPLIT_COLUMNS) return false
+    if (pane.mode === 'off' || width < MIN_SPLIT_COLUMNS || terminal.rows < 16) return false
     if (pane.mode === 'on') return true
-    return view.editPane !== null && view.editPane !== undefined
+    if (width >= 144 && (view.fileChanges?.files?.size || view.editPane || workspaceChanged)) pane.opened = true
+    return pane.opened
   }
-  const editPane = new EditPane({ view, theme, getHeight: () => terminal.rows })
+  let workspaceChanged = false, workspaceBaseline, refreshPromise, refreshEpoch = 0, readRevision = -1, refreshTicker
+  let paneHeight = Math.max(1, terminal.rows - 6), fullDiff = false
+  const editPane = new EditPane({ view, theme, getHeight: () => fullDiff ? terminal.rows : paneHeight,
+    onRefresh: () => refreshChanges(), onReturn: () => focusPane(false), onClose: () => setPaneMode('off') })
+  function focusPane(focused) {
+    editPane.setFocused(focused)
+    tui.setFocus(focused ? editPane : editor)
+    tui.requestRender()
+  }
+  async function refreshChanges() {
+    if (disposed || !options.loadWorkspaceChanges) return
+    if (refreshPromise) return refreshPromise
+    const epoch = refreshEpoch
+    const requestRevision = view.changeRevision ?? 0
+    refreshPromise = (async () => {
+      try {
+        const snapshot = await options.loadWorkspaceChanges()
+        if (disposed || epoch !== refreshEpoch) return
+        const changed = editPane.setWorkspace(snapshot)
+        if (workspaceBaseline === undefined) workspaceBaseline = editPane.workspaceKey
+        else if (changed && workspaceBaseline !== editPane.workspaceKey) workspaceChanged = true
+        readRevision = requestRevision
+      } catch {
+        if (disposed || epoch !== refreshEpoch) return
+        readRevision = requestRevision
+        editPane.error = '读取改动失败，按 r 重试'
+        editPane.touch()
+      } finally {
+        if (epoch === refreshEpoch) refreshPromise = undefined
+        if (!disposed) tui.requestRender()
+      }
+    })()
+    return refreshPromise
+  }
+  function setPaneMode(mode) {
+    if (!['auto', 'on', 'off'].includes(mode)) return
+    pane.mode = mode
+    if (mode === 'off') focusPane(false)
+    options.onPaneModeChange?.(mode)
+    editPane.invalidate()
+    if (mode !== 'off') void refreshChanges()
+    tui.requestRender()
+  }
+  async function showDiff({ focus = false } = {}) {
+    void refreshChanges()
+    if (terminal.columns >= MIN_SPLIT_COLUMNS && terminal.rows >= 16) {
+      if (!focus && paneActive(terminal.columns)) setPaneMode('off')
+      else { setPaneMode('on'); if (focus) focusPane(true) }
+      return
+    }
+    focusPane(false)
+    const originalReturn = editPane.onReturn
+    const originalClose = editPane.onClose
+    fullDiff = true
+    try {
+      await prompter.custom(finish => {
+        editPane.setFocused(true)
+        editPane.onReturn = () => finish(true)
+        editPane.onClose = editPane.onReturn
+        return { render: width => editPane.render(width), invalidate: () => editPane.invalidate(),
+          handleInput(data) { editPane.handleInput(data); tui.requestRender() } }
+      })
+    } finally { fullDiff = false; editPane.onReturn = originalReturn; editPane.onClose = originalClose; editPane.setFocused(false); tui.requestRender() }
+  }
   const editPaneHandle = tui.showOverlay(editPane, {
     nonCapturing: true,
     anchor: 'top-right',
@@ -428,21 +492,26 @@ export function createApp(options) {
   root.addChild(headerSlot)
   root.addChild(chat)
   root.addChild(working)
-  root.addChild(queueLine)
-  root.addChild(aboveWidgets)
-  root.addChild(editorSlot)
-  root.addChild(belowWidgets)
-  root.addChild(footerSlot)
+  const bottom = new Container()
+  bottom.addChild(queueLine)
+  bottom.addChild(aboveWidgets)
+  bottom.addChild(editorSlot)
+  bottom.addChild(belowWidgets)
+  bottom.addChild(footerSlot)
 
-  // 右栏可见时，整棵左列按左宽渲染：右栏 overlay 底下的列保持空白。
-  // overlay 只合成活视口，因此推进 scrollback 的行不带右栏快照——历史
-  // 与复制保持干净。
+  // 只把正文分栏。输入、队列、扩展挂件和状态栏保持全宽，右栏在它们上方结束。
   const splitRoot = {
-    invalidate: () => root.invalidate(),
+    invalidate() { root.invalidate(); bottom.invalidate() },
     render(width) {
-      if (!paneActive(width)) return root.render(width)
-      const left = Math.max(40, width - paneWidthOf(width) - 1)
-      return root.render(left)
+      if (editPane.focused && !paneActive(width) && !hasModalOverlay()) focusPane(false)
+      const bottomLines = bottom.render(width)
+      if (!paneActive(width)) return root.render(width).concat(bottomLines)
+      paneHeight = Math.max(1, terminal.rows - bottomLines.length - 1)
+      const left = Math.max(40, width - paneWidthOf(width) - 3)
+      const content = root.render(left)
+      // 短会话也把输入留在面板下方；长会话仍交由 pi-tui 管理历史滚动。
+      while (content.length < paneHeight) content.push('')
+      return content.concat([''], bottomLines)
     },
   }
 
@@ -502,6 +571,7 @@ export function createApp(options) {
     }
     if (matchesKey(data, Key.escape)) {
       if (hasModalOverlay()) return undefined
+      if (editPane.focused) { focusPane(false); return { consume: true } }
       if (getState().turnActive === true) {
         onInterrupt()
         return { consume: true }
@@ -509,6 +579,18 @@ export function createApp(options) {
       return undefined
     }
     if (!hasModalOverlay()) {
+      if (matchesKey(data, Key.f6)) {
+        if (!isKeyRepeat(data)) {
+          if (editPane.focused) focusPane(false)
+          else void showDiff({ focus: true })
+        }
+        return { consume: true }
+      }
+      if (editPane.focused) {
+        editPane.handleInput(data)
+        tui.requestRender()
+        return { consume: true }
+      }
       // Shift+Tab 循环权限预设（Claude Code 同款手感）；Ctrl+K/O/T 是工作台快捷键。
       const shortcuts = [[Key.ctrl('k'), '/workbench'], [Key.ctrl('o'), '/inspect'], [Key.ctrl('t'), '/thinking'], ['shift+tab', '/permission cycle']]
       for (const [key, command] of shortcuts) {
@@ -523,14 +605,12 @@ export function createApp(options) {
 
   return {
     tui,
+    editPane,
+    showDiff,
+    refreshChanges,
     supportsPromptSignals: true,
     /** 文件编辑右栏：'auto'（有编辑时出现，默认）| 'on'（常驻）| 'off'。 */
-    setPaneMode: (mode) => {
-      if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return
-      pane.mode = mode
-      editPane.invalidate()
-      tui.requestRender()
-    },
+    setPaneMode,
     getPaneMode: () => pane.mode,
     /**
      * 切换主题（热切）。token 表整张替换：所有持有同一个 theme 引用的组件
@@ -560,6 +640,14 @@ export function createApp(options) {
     askText: prompter.askText,
     document: prompter.document,
     resetConversation() {
+      refreshEpoch++
+      refreshPromise = undefined
+      readRevision = -1
+      workspaceBaseline = undefined
+      workspaceChanged = false
+      pane.opened = false
+      editPane.reset()
+      void refreshChanges()
       chat.invalidate()
       working.invalidate()
       footer?.invalidate?.()
@@ -571,6 +659,7 @@ export function createApp(options) {
     /** 重新渲染（模型更新后由 kernel 层调用）。 */
     requestRender: () => {
       if (disposed) return
+      if (readRevision !== (view.changeRevision ?? 0)) void refreshChanges()
       working.invalidate()
       footer?.invalidate?.()
       tui.requestRender()
@@ -617,6 +706,9 @@ export function createApp(options) {
         // 清屏失败不阻止启动。
       }
       tui.start()
+      void refreshChanges()
+      refreshTicker = setInterval(() => { if (paneActive(terminal.columns)) void refreshChanges() }, 2500)
+      refreshTicker.unref?.()
     },
     dispose: () => {
       if (disposed) return
@@ -625,6 +717,7 @@ export function createApp(options) {
       // 可能在等一个永远不来的审批回答，shutdown 就走不到 process.exit。
       prompter.cancelAll()
       editPaneHandle?.hide?.()
+      clearInterval(refreshTicker)
       if (ticker !== undefined) clearInterval(ticker)
       unsubscribe()
       try {

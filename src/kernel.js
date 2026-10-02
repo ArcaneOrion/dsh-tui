@@ -22,6 +22,7 @@ import { activeAtToken, formatFileMention } from '@deepseek-ai/dsh-file-referenc
 import { applySessionEvent, applyStreamFrame, replay, textOfContent } from './projection.js'
 import { readSessionEvents } from './session-events.js'
 import { parseModelRefCandidates } from './model-catalog.js'
+import { readWorkspaceChanges } from './workspace-changes.js'
 
 /**
  * 决定本次会话的模型路由。
@@ -647,6 +648,7 @@ export function createRuntimeAccess(ctx, getAgent) {
       sessionsCache.set(cacheKey, { at: Date.now(), value })
       return [...value]
     },
+    changes: () => readWorkspaceChanges(agent().session?.header?.cwd ?? process.cwd()),
     async validateResume(id) {
       const query = ctx.get('sessionQuery')
       if (typeof query?.readTitleSnapshot === 'function') {

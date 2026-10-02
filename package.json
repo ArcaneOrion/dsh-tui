@@ -37,8 +37,10 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "audit": "node scripts/audit.mjs",
-    "check": "node --check src/index.js && node --check src/app.js && node --check src/kernel.js && node --check src/projection.js && node --check src/registry.js && node --check src/messages.js && node --check src/theme.js && node --check src/host.js && node --check src/startup.js && node --check src/workbench.js && node --check src/document.js && node --check src/composer.js && node --check src/edit-pane.js && node --check src/layout.js && node --check src/prompts.js && node --check src/footer.js && node --check src/interactive.js && node --check src/mentions.js && node --check src/session-switch.js",
+    "check": "node --check src/index.js && node --check src/app.js && node --check src/kernel.js && node --check src/projection.js && node --check src/registry.js && node --check src/messages.js && node --check src/theme.js && node --check src/host.js && node --check src/startup.js && node --check src/workbench.js && node --check src/document.js && node --check src/composer.js && node --check src/edit-pane.js && node --check src/layout.js && node --check src/prompts.js && node --check src/footer.js && node --check src/interactive.js && node --check src/mentions.js && node --check src/session-switch.js && node --check src/file-changes.js && node --check src/workspace-changes.js",
     "demo": "node scripts/demo.mjs",
+    "demo:files": "node scripts/demo.mjs --files",
+    "preview:files": "node scripts/file-pane-preview.mjs",
     "design:preview": "node scripts/design-preview.mjs"
   },
   "dependencies": {

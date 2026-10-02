@@ -312,6 +312,14 @@ export class ToolCard extends Container {
   }
 
   build(row, theme) {
+    const diff = row.resultView?.card === 'diff' ? row.resultView : row.callView?.card === 'diff' ? row.callView : undefined
+    if (diff && row.isError !== true) {
+      const text = summarizeDiffs(diff.diffs ?? [], theme)
+      this.addChild(new Text(theme.fg(row.done ? 'muted' : 'warning', row.done ? '✎ 已修改' : '✎ 正在修改')
+        + (text.length ? '\n' + text.join('\n') : ' ' + (diff.title ?? row.toolName))
+        + theme.fg('dim', '  · /diff 查看'), 1, 0))
+      return
+    }
     // pi 的 ToolExecutionComponent：一整块底色随状态变的框——运行中
     // toolPendingBg、失败 toolErrorBg、成功 toolSuccessBg。底色本身就是状态
     // 信号，不再有「运行中…/完成」这样的文字行。

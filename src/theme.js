@@ -115,7 +115,10 @@ export const BLUE_TOKENS = Object.freeze({
   selectedBg: '#283457',
   panelBg: '#131721',
   panelBorder: '#2a3a52',
-  paneBg: '#131721',
+  paneBg: '#242424',
+  paneText: '#c4c4bf',
+  paneMuted: '#90908c',
+  paneBorder: '#666662',
   paneBorder: '#2a3a52',
 
   // 底栏
@@ -193,7 +196,10 @@ export const PI_TOKENS = Object.freeze({
   selectedBg: '#3a5d78',
   panelBg: '#1a3045',
   panelBorder: '#3a5d78',
-  paneBg: '#1a3045',
+  paneBg: '#242424',
+  paneText: '#c4c4bf',
+  paneMuted: '#90908c',
+  paneBorder: '#666662',
   paneBorder: '#3a5d78',
 
   // 底栏

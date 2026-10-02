@@ -489,6 +489,10 @@ export async function apply(ctx) {
         }
         return
       }
+      if (parsed.name === 'diff') {
+        await app?.showDiff?.()
+        return
+      }
       if (parsed.name === 'pane') {
         // /pane           → auto → on → off → auto 轮换
         // /pane auto|on|off → 直接设定
@@ -614,6 +618,9 @@ export async function apply(ctx) {
       view,
       theme,
       registry,
+      loadWorkspaceChanges: () => kernel.runtime.changes(),
+      initialPaneMode: saved.paneMode,
+      onPaneModeChange: paneMode => prefs.write({ paneMode }),
       onSubmit: (text) => {
         if (sessionSwitcher?.busy) { app?.notice?.('正在恢复会话，草稿已保留'); return false }
         // 提交环节的任何异常都必须在界面上**看得见**。静默失败会让用户
